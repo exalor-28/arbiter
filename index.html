@@ -32,7 +32,6 @@
     font-family: 'Inter', sans-serif;
     background: var(--bg);
     color: var(--text);
-    height: 100vh;
     height: 100dvh;
     overflow: hidden;
     display: flex;
@@ -40,10 +39,17 @@
     font-size: 14px;
     line-height: 1.6;
     padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
+
+  #app {
+    display: none;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #app.visible { display: flex; }
 
   /* LOCK */
   #lock-screen {
@@ -106,10 +112,6 @@
     outline: none; transition: border-color 0.15s; width: 100%;
   }
   .field-input:focus { border-color: var(--accent); }
-
-  /* APP */
-  #app { display: none; height: 100vh; overflow: hidden; }
-  #app.visible { display: flex; }
 
   /* SIDEBAR */
   #sidebar {
@@ -738,16 +740,20 @@ let state = {
 
 function init() {
   try { const s = localStorage.getItem('arbiter_v2'); if (s) state = {...state, ...JSON.parse(s)}; } catch(e) {}
-  // merge nested settings
   try { const s = localStorage.getItem('arbiter_v2'); if (s) { const p = JSON.parse(s); if (p.settings) state.settings = {...state.settings, ...p.settings}; } } catch(e) {}
 
   document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => { el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); }); });
 
-  // apply app name
+  // fix iOS keyboard gap
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      document.body.style.height = window.visualViewport.height + 'px';
+    });
+  }
+
   applyAppName();
 
-  // skip lock if already unlocked on this device
   if (localStorage.getItem('arbiter_unlocked') === '1') {
     document.getElementById('lock-screen').style.display = 'none';
     if (!state.settings.orKey || !state.settings.password) { document.getElementById('setup-screen').classList.add('visible'); }
