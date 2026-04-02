@@ -904,12 +904,6 @@ function init() {
     'grok':  'x-ai/grok-3'
   };
   if (MODEL_MIGRATION[state.activeModel]) state.activeModel = MODEL_MIGRATION[state.activeModel];
-  // migrate legacy model keys → full OpenRouter IDs
-  const MODEL_MIGRATION = {
-    'gpt4o': 'openai/gpt-4o-2024-11-20',
-    'grok':  'x-ai/grok-3'
-  };
-  if (MODEL_MIGRATION[state.activeModel]) state.activeModel = MODEL_MIGRATION[state.activeModel];
   Object.values(state.chats).forEach(c => {
     if (MODEL_MIGRATION[c.model]) c.model = MODEL_MIGRATION[c.model];
     c.messages && c.messages.forEach(m => { if (MODEL_MIGRATION[m.model]) m.model = MODEL_MIGRATION[m.model]; });
