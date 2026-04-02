@@ -131,11 +131,13 @@
     #sidebar.collapsed { transform: translateX(-100%); }
     .messages-inner { padding: 0 12px; gap: 16px; }
     .input-area { padding: 8px 10px 16px; }
-    .topbar { padding: 8px 12px; height: 48px; }
-    .model-tab { padding: 4px 10px; font-size: 12px; }
+    .topbar { padding: 6px 10px; height: auto; min-height: 48px; flex-wrap: wrap; gap: 6px; }
+    .topbar-left { flex: 1; min-width: 0; }
+    .topbar-right { flex-shrink: 0; }
+    .model-tabs { flex: 1; }
+    .model-tab { padding: 4px 10px; font-size: 12px; flex: 1; text-align: center; }
     .msg-avatar { width: 26px; height: 26px; font-size: 10px; }
     .msg-text { font-size: 13px; }
-    .topbar-right .icon-sm:nth-child(2) { display: none; }
     .panel { width: 98vw; max-width: 98vw; margin: 8px; }
     .setup-form { width: 100%; max-width: 380px; }
     .lock-form { width: 88vw; max-width: 300px; }
@@ -674,7 +676,10 @@ function launchApp() {
   updateModelUI(); renderChatList(); renderMemoryList();
   loadInstructionsPanel(); loadSettingsPanel(); updateSupabaseStatus();
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
-  if (state.settings.sbUrl && state.settings.sbKey) syncFromSupabase();
+  if (state.settings.sbUrl && state.settings.sbKey) {
+    syncFromSupabase();
+    syncSettingsFromSupabase();
+  }
 }
 
 async function syncFromSupabase() {
@@ -926,6 +931,7 @@ async function extractMemory(userMsg, assistantMsg) {
     if (Array.isArray(facts) && facts.length) {
       facts.forEach(f => { if(typeof f==='string'&&f.trim()&&!state.memory.includes(f.trim())) state.memory.push(f.trim()); });
       save(); renderMemoryList(); toast(`${facts.length} memory fact${facts.length>1?'s':''} saved`);
+      if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
     }
   } catch(e) {}
 }
@@ -942,7 +948,6 @@ function addMemory() {
 }
 
 function delMemory(i) { state.memory.splice(i,1); save(); renderMemoryList(); }
-function clearMemory() { if(confirm('Clear all memory?')){state.memory=[];save();renderMemoryList();} }
 
 function loadInstructionsPanel() {
   document.getElementById('instructions-about').value = state.instructions.about||'';
@@ -952,7 +957,61 @@ function loadInstructionsPanel() {
 function saveInstructions() {
   state.instructions.about = document.getElementById('instructions-about').value.trim();
   state.instructions.style = document.getElementById('instructions-style').value.trim();
-  save(); closePanel('instructions-panel'); toast('Instructions saved');
+  save();
+  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  closePanel('instructions-panel'); toast('Instructions saved');
+}
+
+function addMemory() {
+  const inp=document.getElementById('new-memory-input'); const val=inp.value.trim();
+  if(!val)return;
+  if(!state.memory.includes(val)){
+    state.memory.push(val); save(); renderMemoryList();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  }
+  inp.value='';
+}
+
+function delMemory(i) {
+  state.memory.splice(i,1); save(); renderMemoryList();
+  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+}
+
+function clearMemory() {
+  if(confirm('Clear all memory?')){
+    state.memory=[]; save(); renderMemoryList();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  }
+}
+
+async function syncSettingsToSupabase() {
+  try {
+    await fetch(`${state.settings.sbUrl}/rest/v1/user_settings`, {
+      method: 'POST',
+      headers: {'apikey':state.settings.sbKey,'Authorization':`Bearer ${state.settings.sbKey}`,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
+      body: JSON.stringify({
+        id: 'main',
+        memory: JSON.stringify(state.memory),
+        instructions: JSON.stringify(state.instructions),
+        updated_at: new Date().toISOString()
+      })
+    });
+  } catch(e) {}
+}
+
+async function syncSettingsFromSupabase() {
+  try {
+    const res = await fetch(`${state.settings.sbUrl}/rest/v1/user_settings?id=eq.main&select=*`, {
+      headers: {'apikey':state.settings.sbKey,'Authorization':`Bearer ${state.settings.sbKey}`}
+    });
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!rows.length) return;
+    const row = rows[0];
+    if (row.memory) state.memory = JSON.parse(row.memory);
+    if (row.instructions) state.instructions = JSON.parse(row.instructions);
+    save(); renderMemoryList(); loadInstructionsPanel();
+  } catch(e) {}
 }
 
 function loadSettingsPanel() {
