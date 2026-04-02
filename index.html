@@ -175,7 +175,7 @@
     .lock-form { width: 88vw; max-width: 300px; }
   }
 
-  .sidebar-top { padding: 12px 12px 8px; }
+  .sidebar-top { padding: max(12px, env(safe-area-inset-top)) 12px 8px; }
   .sidebar-header-row {
     display: flex; align-items: center; justify-content: space-between;
     padding: 4px 4px 4px 8px;
@@ -897,6 +897,23 @@ function init() {
       }
     }
   } catch(e) {}
+
+  // migrate legacy model keys → full OpenRouter IDs
+  const MODEL_MIGRATION = {
+    'gpt4o': 'openai/gpt-4o-2024-11-20',
+    'grok':  'x-ai/grok-3'
+  };
+  if (MODEL_MIGRATION[state.activeModel]) state.activeModel = MODEL_MIGRATION[state.activeModel];
+  // migrate legacy model keys → full OpenRouter IDs
+  const MODEL_MIGRATION = {
+    'gpt4o': 'openai/gpt-4o-2024-11-20',
+    'grok':  'x-ai/grok-3'
+  };
+  if (MODEL_MIGRATION[state.activeModel]) state.activeModel = MODEL_MIGRATION[state.activeModel];
+  Object.values(state.chats).forEach(c => {
+    if (MODEL_MIGRATION[c.model]) c.model = MODEL_MIGRATION[c.model];
+    c.messages && c.messages.forEach(m => { if (MODEL_MIGRATION[m.model]) m.model = MODEL_MIGRATION[m.model]; });
+  });
 
   document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => {
