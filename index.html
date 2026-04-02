@@ -862,7 +862,9 @@ function scrollBottom() { const w=document.getElementById('messages-wrap'); setT
 async function sendMessage() {
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
-  if (!text || state.isStreaming) return;
+  if (!text) return;
+  // reset stuck streaming state
+  if (state.isStreaming) { state.isStreaming = false; document.getElementById('send-btn').disabled = false; hideTyping(); }
   if (!state.settings.orKey) { toast('Add your OpenRouter API key in Settings'); openPanel('settings-panel'); return; }
   if (!state.currentChatId) newChat();
   const chat = state.chats[state.currentChatId];
@@ -879,7 +881,12 @@ async function sendMessage() {
     if (state.settings.autoMemory) extractMemory(text, reply);
     if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
   } catch(e) {
-    hideTyping(); toast('Error: ' + (e.message||'Request failed'));
+    hideTyping();
+    const errMsg = e.message || 'Request failed';
+    toast('Error: ' + errMsg, 4000);
+    // show error inline so it's visible on mobile too
+    chat.messages.push({ role:'assistant', content:`⚠️ Error: ${errMsg}`, model:state.activeModel, ts:Date.now(), isError:true });
+    save(); renderMessages();
   }
   state.isStreaming = false;
   document.getElementById('send-btn').disabled = false;
