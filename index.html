@@ -507,8 +507,8 @@
 
   <!-- Quick connect (new device) -->
   <div id="setup-quick" style="display:none">
-    <div class="setup-title">Connect to existing setup</div>
-    <div class="setup-sub">Enter your Supabase credentials and we'll pull the rest automatically.</div>
+    <div class="setup-title">Connect device</div>
+    <div class="setup-sub">Enter your Supabase credentials and everything else (app name, passphrase, API key) will be pulled automatically.</div>
     <div class="setup-form">
       <div class="field-group">
         <div class="field-label">Supabase URL</div>
@@ -772,9 +772,10 @@ function tryUnlock() {
   const inp = document.getElementById('lock-input');
   const err = document.getElementById('lock-error');
   if (!state.settings.password) {
-    // no password set yet, go to setup
+    // no local config — show quick connect by default
     document.getElementById('lock-screen').style.display = 'none';
     document.getElementById('setup-screen').classList.add('visible');
+    showQuickConnect();
     return;
   }
   if (inp.value === state.settings.password) {
