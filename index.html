@@ -311,6 +311,46 @@
   .send-btn:hover { opacity: 0.85; }
   .send-btn:disabled { opacity: 0.25; cursor: default; }
 
+  .attach-btn {
+    width: 28px; height: 28px; border-radius: 6px; background: none;
+    border: none; color: var(--text-dim); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.12s, background 0.12s; flex-shrink: 0;
+  }
+  .attach-btn:hover { color: var(--text); background: var(--surface2); }
+
+  #upload-preview {
+    max-width: 720px; margin: 0 auto 6px;
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+
+  .upload-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px;
+    font-size: 12px; color: var(--text);
+  }
+
+  .upload-chip img {
+    width: 32px; height: 32px; border-radius: 4px; object-fit: cover;
+  }
+
+  .upload-chip-name {
+    max-width: 140px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    font-size: 12px; color: var(--text-dim);
+  }
+
+  .upload-chip-remove {
+    background: none; border: none; color: var(--text-dimmer);
+    cursor: pointer; font-size: 15px; line-height: 1;
+    padding: 0 2px; transition: color 0.12s;
+  }
+
+  .upload-chip-remove:hover { color: var(--danger); }
+
+  .msg-image { max-width: 260px; border-radius: 8px; margin-top: 8px; display: block; }
+
   /* PANELS */
   .panel-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.5);
@@ -501,11 +541,18 @@
     </div>
 
     <div class="input-area">
+      <div id="upload-preview"></div>
       <div class="input-box">
         <textarea id="chat-input" placeholder="Message Arbiter..." rows="1"
           onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <div class="input-footer-row">
-          <span class="input-hint">Enter to send · Shift+Enter for newline</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach file or image">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <input type="file" id="file-input" style="display:none" accept="image/*,.txt,.md,.pdf" onchange="handleFileSelect(event)" />
+            <span class="input-hint">Enter to send · Shift+Enter for newline</span>
+          </div>
           <button class="send-btn" id="send-btn" onclick="sendMessage()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -805,11 +852,22 @@ function renderMsg(msg, idx) {
   const time = msg.ts ? new Date(msg.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
   const badge = !isUser && msg.model ? `<span class="model-badge ${msg.model}">${MODELS[msg.model]?.label||msg.model}</span>` : '';
   const editBtn = isUser ? `<button class="msg-edit-btn" onclick="startEdit(${idx})">Edit</button>` : '';
+
+  // render inline images from rawContent
+  let extraContent = '';
+  if (isUser && Array.isArray(msg.rawContent)) {
+    msg.rawContent.forEach(part => {
+      if (part.type === 'image_url') {
+        extraContent += `<img src="${part.image_url.url}" class="msg-image" alt="uploaded image">`;
+      }
+    });
+  }
+
   return `<div class="message ${msg.role}" data-idx="${idx}">
     <div class="msg-avatar">${av}</div>
     <div class="msg-content">
       <div class="msg-name">${isUser?'You':(MODELS[msg.model]?.label||'Assistant')}</div>
-      <div class="msg-text" id="msg-text-${idx}">${fmt(msg.content)}</div>
+      <div class="msg-text" id="msg-text-${idx}">${fmt(msg.content)}${extraContent}</div>
       <div class="msg-footer"><span class="msg-time">${time}</span>${badge}${editBtn}</div>
     </div>
   </div>`;
@@ -856,7 +914,67 @@ function submitEdit(idx) {
   sendMessage();
 }
 
-function fmt(t) {
+// ── UPLOADS ──
+let pendingAttachments = []; // [{ type: 'image'|'text', name, data, mediaType }]
+
+function handleFileSelect(e) {
+  const files = Array.from(e.target.files);
+  e.target.value = '';
+  files.forEach(file => {
+    const reader = new FileReader();
+    if (file.type.startsWith('image/')) {
+      reader.onload = ev => {
+        const base64 = ev.target.result.split(',')[1];
+        pendingAttachments.push({ type: 'image', name: file.name, data: base64, mediaType: file.type, dataUrl: ev.target.result });
+        renderUploadPreview();
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = ev => {
+        pendingAttachments.push({ type: 'text', name: file.name, data: ev.target.result });
+        renderUploadPreview();
+      };
+      reader.readAsText(file);
+    }
+  });
+}
+
+function renderUploadPreview() {
+  const el = document.getElementById('upload-preview');
+  if (!pendingAttachments.length) { el.innerHTML = ''; return; }
+  el.innerHTML = pendingAttachments.map((a, i) => `
+    <div class="upload-chip">
+      ${a.type === 'image' ? `<img src="${a.dataUrl}" alt="${esc(a.name)}">` : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'}
+      <span class="upload-chip-name">${esc(a.name)}</span>
+      <button class="upload-chip-remove" onclick="removeAttachment(${i})">×</button>
+    </div>`).join('');
+}
+
+function removeAttachment(i) {
+  pendingAttachments.splice(i, 1);
+  renderUploadPreview();
+}
+
+function buildMessageContent(text) {
+  if (!pendingAttachments.length) return text;
+  const content = [];
+  // add text first
+  if (text) content.push({ type: 'text', text });
+  // add attachments
+  pendingAttachments.forEach(a => {
+    if (a.type === 'image') {
+      content.push({ type: 'image_url', image_url: { url: `data:${a.mediaType};base64,${a.data}` } });
+    } else {
+      content.push({ type: 'text', text: `\n\n[File: ${a.name}]\n${a.data}` });
+    }
+  });
+  return content;
+}
+
+function getAttachmentSummary() {
+  if (!pendingAttachments.length) return '';
+  return ' [' + pendingAttachments.map(a => a.name).join(', ') + ']';
+}
   if (!t) return '';
   t = esc(t);
   t = t.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
@@ -873,15 +991,24 @@ function scrollBottom() { const w=document.getElementById('messages-wrap'); setT
 async function sendMessage() {
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
-  if (!text) return;
-  // reset stuck streaming state
+  if (!text && !pendingAttachments.length) return;
   if (state.isStreaming) { state.isStreaming = false; document.getElementById('send-btn').disabled = false; hideTyping(); }
   if (!state.settings.orKey) { toast('Add your OpenRouter API key in Settings'); openPanel('settings-panel'); return; }
   if (!state.currentChatId) newChat();
   const chat = state.chats[state.currentChatId];
-  chat.messages.push({ role:'user', content:text, ts:Date.now() });
-  if (chat.title==='New Chat') chat.title = text.length>42 ? text.slice(0,42)+'…' : text;
-  inp.value = ''; autoResize(inp); save(); renderMessages(); renderChatList();
+
+  // build display text for storage
+  const displayText = text + getAttachmentSummary();
+  const messageContent = buildMessageContent(text);
+
+  chat.messages.push({ role:'user', content: displayText, rawContent: messageContent, ts:Date.now() });
+  if (chat.title==='New Chat') chat.title = (text||pendingAttachments[0]?.name||'Upload').slice(0,42);
+
+  // clear input and attachments
+  inp.value = ''; autoResize(inp);
+  pendingAttachments = []; renderUploadPreview();
+  save(); renderMessages(); renderChatList();
+
   showTyping(); state.isStreaming = true;
   document.getElementById('send-btn').disabled = true;
   try {
@@ -895,7 +1022,6 @@ async function sendMessage() {
     hideTyping();
     const errMsg = e.message || 'Request failed';
     toast('Error: ' + errMsg, 4000);
-    // show error inline so it's visible on mobile too
     chat.messages.push({ role:'assistant', content:`⚠️ Error: ${errMsg}`, model:state.activeModel, ts:Date.now(), isError:true });
     save(); renderMessages();
   }
@@ -910,7 +1036,7 @@ function buildMsgs(chat) {
   if (state.memory.length) parts.push('Key facts about the user:\n' + state.memory.map(m=>'- '+m).join('\n'));
   const msgs = [];
   if (parts.length) msgs.push({ role:'system', content:parts.join('\n\n') });
-  chat.messages.filter(m=>m.role!=='system').forEach(m => msgs.push({role:m.role, content:m.content}));
+  chat.messages.filter(m=>m.role!=='system').forEach(m => msgs.push({ role:m.role, content: m.rawContent || m.content }));
   return msgs;
 }
 
