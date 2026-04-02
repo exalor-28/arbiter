@@ -211,6 +211,24 @@
 
   .msg-footer { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
   .msg-time { font-size: 11px; color: var(--text-dimmer); }
+
+  .msg-edit-btn {
+    background: none; border: none; color: var(--text-dimmer); cursor: pointer;
+    font-size: 11px; padding: 2px 6px; border-radius: 4px;
+    transition: color 0.12s, background 0.12s; opacity: 0;
+  }
+  .message:hover .msg-edit-btn { opacity: 1; }
+  .msg-edit-btn:hover { color: var(--text); background: var(--surface2); }
+
+  .msg-edit-box {
+    width: 100%; background: var(--surface); border: 1px solid #555;
+    border-radius: 10px; padding: 10px 12px; color: var(--text);
+    font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.6;
+    resize: none; outline: none; margin-top: 6px;
+  }
+
+  .msg-edit-actions { display: flex; gap: 6px; margin-top: 8px; }
+
   .model-badge {
     font-size: 10px; font-weight: 500; padding: 1px 7px;
     border-radius: 20px; border: 1px solid;
@@ -668,23 +686,65 @@ function renderMessages() {
     wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚖️</div><div class="empty-title">Arbiter</div><div class="empty-subtitle">GPT-4o and Grok, with memory and custom instructions.</div></div>`;
     return;
   }
-  wrap.innerHTML = chat.messages.filter(m=>m.role!=='system').map(renderMsg).join('');
+  wrap.innerHTML = chat.messages.filter(m=>m.role!=='system').map((m,i)=>renderMsg(m,i)).join('');
   scrollBottom();
 }
 
-function renderMsg(msg) {
+function renderMsg(msg, idx) {
   const isUser = msg.role === 'user';
   const av = isUser ? 'YOU' : (MODELS[msg.model]?.label?.substring(0,2)||'AI');
   const time = msg.ts ? new Date(msg.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
   const badge = !isUser && msg.model ? `<span class="model-badge ${msg.model}">${MODELS[msg.model]?.label||msg.model}</span>` : '';
-  return `<div class="message ${msg.role}">
+  const editBtn = isUser ? `<button class="msg-edit-btn" onclick="startEdit(${idx})">Edit</button>` : '';
+  return `<div class="message ${msg.role}" data-idx="${idx}">
     <div class="msg-avatar">${av}</div>
     <div class="msg-content">
       <div class="msg-name">${isUser?'You':(MODELS[msg.model]?.label||'Assistant')}</div>
-      <div class="msg-text">${fmt(msg.content)}</div>
-      <div class="msg-footer"><span class="msg-time">${time}</span>${badge}</div>
+      <div class="msg-text" id="msg-text-${idx}">${fmt(msg.content)}</div>
+      <div class="msg-footer"><span class="msg-time">${time}</span>${badge}${editBtn}</div>
     </div>
   </div>`;
+}
+
+function startEdit(idx) {
+  const chat = state.chats[state.currentChatId];
+  const msg = chat.messages.filter(m=>m.role!=='system')[idx];
+  const textEl = document.getElementById(`msg-text-${idx}`);
+  if (!textEl) return;
+
+  textEl.innerHTML = `
+    <textarea class="msg-edit-box" id="edit-textarea-${idx}" rows="3">${esc(msg.content)}</textarea>
+    <div class="msg-edit-actions">
+      <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="submitEdit(${idx})">Save & Resend</button>
+      <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="cancelEdit(${idx})">Cancel</button>
+    </div>`;
+
+  const ta = document.getElementById(`edit-textarea-${idx}`);
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function cancelEdit(idx) { renderMessages(); }
+
+function submitEdit(idx) {
+  const ta = document.getElementById(`edit-textarea-${idx}`);
+  if (!ta) return;
+  const newText = ta.value.trim();
+  if (!newText) return;
+
+  const chat = state.chats[state.currentChatId];
+  const visibleMsgs = chat.messages.filter(m=>m.role!=='system');
+  const realIdx = chat.messages.indexOf(visibleMsgs[idx]);
+
+  // truncate everything from this message onward
+  chat.messages = chat.messages.slice(0, realIdx);
+  save();
+
+  // put new text in input and send
+  document.getElementById('chat-input').value = newText;
+  sendMessage();
 }
 
 function fmt(t) {
