@@ -674,6 +674,47 @@ function launchApp() {
   updateModelUI(); renderChatList(); renderMemoryList();
   loadInstructionsPanel(); loadSettingsPanel(); updateSupabaseStatus();
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
+  if (state.settings.sbUrl && state.settings.sbKey) syncFromSupabase();
+}
+
+async function syncFromSupabase() {
+  try {
+    const res = await fetch(`${state.settings.sbUrl}/rest/v1/chats?select=*&order=updated_at.desc&limit=100`, {
+      headers: {
+        'apikey': state.settings.sbKey,
+        'Authorization': `Bearer ${state.settings.sbKey}`
+      }
+    });
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    let newCount = 0;
+    rows.forEach(row => {
+      // merge: remote wins if newer or not present locally
+      const local = state.chats[row.id];
+      const remoteUpdated = new Date(row.updated_at).getTime();
+      const localUpdated = local ? (local.updatedAt || local.createdAt || 0) : 0;
+      if (!local || remoteUpdated > localUpdated) {
+        try {
+          state.chats[row.id] = {
+            title: row.title,
+            model: row.model,
+            messages: typeof row.messages === 'string' ? JSON.parse(row.messages) : row.messages,
+            createdAt: local?.createdAt || remoteUpdated,
+            updatedAt: remoteUpdated
+          };
+          if (!local) newCount++;
+        } catch(e) {}
+      }
+    });
+
+    if (newCount > 0) {
+      save();
+      renderChatList();
+      toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`);
+    }
+  } catch(e) {}
 }
 
 function setModel(m) {
@@ -933,11 +974,13 @@ function updateSupabaseStatus() {
 
 async function syncSupabase(chatId) {
   const chat=state.chats[chatId]; if(!chat)return;
+  const now = new Date().toISOString();
+  chat.updatedAt = Date.now();
   try {
     await fetch(`${state.settings.sbUrl}/rest/v1/chats`,{
       method:'POST',
       headers:{'apikey':state.settings.sbKey,'Authorization':`Bearer ${state.settings.sbKey}`,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
-      body:JSON.stringify({id:chatId,title:chat.title,model:chat.model,messages:JSON.stringify(chat.messages),updated_at:new Date().toISOString()})
+      body:JSON.stringify({id:chatId,title:chat.title,model:chat.model,messages:JSON.stringify(chat.messages),updated_at:now})
     });
   } catch(e){}
 }
