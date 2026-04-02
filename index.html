@@ -460,7 +460,7 @@
 
 <!-- LOCK -->
 <div id="lock-screen">
-  <div class="lock-logo">Arbiter</div>
+  <div class="lock-logo" id="lock-logo">Arbiter</div>
   <div class="lock-form">
     <input type="password" class="lock-input" id="lock-input" placeholder="Enter passphrase" autocomplete="off" />
     <button class="primary-btn" onclick="tryUnlock()">Continue</button>
@@ -470,24 +470,59 @@
 
 <!-- SETUP -->
 <div id="setup-screen">
-  <div class="setup-title">Set up Arbiter</div>
-  <div class="setup-sub">One-time setup. Keys stored locally in your browser only — never sent anywhere except the model providers.</div>
-  <div class="setup-form">
-    <div class="field-group">
-      <div class="field-label">OpenRouter API Key</div>
-      <input type="password" class="field-input" id="setup-or-key" placeholder="sk-or-..." />
-      <div class="field-hint">openrouter.ai/settings/keys</div>
+  <!-- Full setup (first device) -->
+  <div id="setup-full">
+    <div class="setup-title">Set up your app</div>
+    <div class="setup-sub">First-time setup. Your config will sync to Supabase so other devices only need your Supabase keys.</div>
+    <div class="setup-form">
+      <div class="field-group">
+        <div class="field-label">App Name</div>
+        <input type="text" class="field-input" id="setup-app-name" placeholder="e.g. Arbiter, Nexus, Oracle..." maxlength="24" />
+        <div class="field-hint">Shown on the lock screen and sidebar</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Set a Passphrase</div>
+        <input type="password" class="field-input" id="setup-password" placeholder="Choose a passphrase..." autocomplete="new-password" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">OpenRouter API Key</div>
+        <input type="password" class="field-input" id="setup-or-key" placeholder="sk-or-..." />
+        <div class="field-hint">openrouter.ai/settings/keys</div>
+      </div>
+      <div class="field-group">
+        <div class="field-label">Supabase URL</div>
+        <input type="text" class="field-input" id="setup-sb-url" placeholder="https://xxxx.supabase.co" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Supabase Publishable Key</div>
+        <input type="password" class="field-input" id="setup-sb-key" placeholder="sb_publishable_..." />
+        <div class="field-hint">Required for cross-device sync</div>
+      </div>
+      <button class="primary-btn" onclick="saveSetup()">Save & Start</button>
+      <div style="text-align:center;margin-top:4px">
+        <button onclick="showQuickConnect()" style="background:none;border:none;color:var(--text-dim);font-size:12px;cursor:pointer;text-decoration:underline">Already set up on another device? Connect here</button>
+      </div>
     </div>
-    <div class="field-group">
-      <div class="field-label">Supabase URL <span style="color:var(--text-dimmer);font-weight:400">(optional)</span></div>
-      <input type="text" class="field-input" id="setup-sb-url" placeholder="https://xxxx.supabase.co" />
+  </div>
+
+  <!-- Quick connect (new device) -->
+  <div id="setup-quick" style="display:none">
+    <div class="setup-title">Connect to existing setup</div>
+    <div class="setup-sub">Enter your Supabase credentials and we'll pull the rest automatically.</div>
+    <div class="setup-form">
+      <div class="field-group">
+        <div class="field-label">Supabase URL</div>
+        <input type="text" class="field-input" id="quick-sb-url" placeholder="https://xxxx.supabase.co" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Supabase Publishable Key</div>
+        <input type="password" class="field-input" id="quick-sb-key" placeholder="sb_publishable_..." />
+      </div>
+      <button class="primary-btn" onclick="quickConnect()">Connect</button>
+      <div style="text-align:center;margin-top:4px">
+        <button onclick="showFullSetup()" style="background:none;border:none;color:var(--text-dim);font-size:12px;cursor:pointer;text-decoration:underline">First time? Full setup</button>
+      </div>
     </div>
-    <div class="field-group">
-      <div class="field-label">Supabase Anon Key <span style="color:var(--text-dimmer);font-weight:400">(optional)</span></div>
-      <input type="password" class="field-input" id="setup-sb-key" placeholder="eyJ..." />
-      <div class="field-hint">Optional — enables chat sync across devices</div>
-    </div>
-    <button class="primary-btn" onclick="saveSetup()">Save & Start</button>
   </div>
 </div>
 
@@ -497,7 +532,7 @@
   <div id="sidebar">
     <div class="sidebar-top">
       <div class="sidebar-header-row">
-        <span class="sidebar-brand">Arbiter</span>
+        <span class="sidebar-brand" id="sidebar-brand">Arbiter</span>
         <button class="icon-sm" onclick="newChat()" title="New chat">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
@@ -534,7 +569,7 @@
       <div class="messages-inner" id="messages-inner">
         <div class="empty-state">
           <div class="empty-icon">⚖️</div>
-          <div class="empty-title">Arbiter</div>
+          <div class="empty-title" id="empty-title">Arbiter</div>
           <div class="empty-subtitle">GPT-4o and Grok, with memory and custom instructions.</div>
         </div>
       </div>
@@ -612,7 +647,7 @@
         <div class="p-label">About you</div>
         <div class="p-desc">Background context injected at the start of every conversation.</div>
         <textarea class="p-textarea" id="instructions-about" style="min-height:130px"
-          placeholder="e.g. I'm based in Chicago, work in private equity, and focus on Indo-Pacific geopolitics. I prefer direct analysis without diplomatic softening..."></textarea>
+          placeholder="e.g. I'm a researcher based in New York focused on geopolitics and economics. I prefer direct analysis without diplomatic softening..."></textarea>
       </div>
       <div>
         <div class="p-label">How you'd like responses</div>
@@ -636,6 +671,21 @@
       <button class="panel-close" onclick="closePanel('settings-panel')">×</button>
     </div>
     <div class="panel-body">
+      <div>
+        <div class="p-label">App Name</div>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="p-input" id="app-name-input" placeholder="Arbiter" maxlength="24" style="flex:1" />
+          <button class="btn btn-ghost" onclick="saveAppName()">Save</button>
+        </div>
+      </div>
+      <div>
+        <div class="p-label">Change Passphrase</div>
+        <div style="display:flex;gap:8px">
+          <input type="password" class="p-input" id="new-password-input" placeholder="New passphrase..." style="flex:1" />
+          <button class="btn btn-ghost" onclick="savePassword()">Save</button>
+        </div>
+      </div>
+      <hr class="divider">
       <div>
         <div class="p-label">OpenRouter API Key</div>
         <div style="display:flex;gap:8px">
@@ -674,30 +724,46 @@
 <div id="toast"></div>
 
 <script>
-const PASSWORD = '!Gpt5sucks';
 const MODELS = {
-  gpt4o: { id: 'openai/gpt-4o-2024-11-20:online', label: 'GPT-4o', tag: 'gpt4o' },
-  grok:  { id: 'x-ai/grok-3',               label: 'Grok 3',  tag: 'grok'  }
+  gpt4o: { id: 'openai/gpt-4o-2024-11-20', label: 'GPT-4o', tag: 'gpt4o' },
+  grok:  { id: 'x-ai/grok-3',              label: 'Grok 3',  tag: 'grok'  }
 };
 
 let state = {
   activeModel: 'gpt4o', currentChatId: null, chats: {},
   memory: [], instructions: { about: '', style: '' },
-  settings: { orKey: '', sbUrl: '', sbKey: '', autoMemory: false },
+  settings: { orKey: '', sbUrl: '', sbKey: '', autoMemory: false, appName: 'Arbiter', password: '' },
   sidebarOpen: true, isStreaming: false
 };
 
 function init() {
   try { const s = localStorage.getItem('arbiter_v2'); if (s) state = {...state, ...JSON.parse(s)}; } catch(e) {}
+  // merge nested settings
+  try { const s = localStorage.getItem('arbiter_v2'); if (s) { const p = JSON.parse(s); if (p.settings) state.settings = {...state.settings, ...p.settings}; } } catch(e) {}
+
   document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => { el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); }); });
+
+  // apply app name
+  applyAppName();
 
   // skip lock if already unlocked on this device
   if (localStorage.getItem('arbiter_unlocked') === '1') {
     document.getElementById('lock-screen').style.display = 'none';
-    if (!state.settings.orKey) { document.getElementById('setup-screen').classList.add('visible'); }
+    if (!state.settings.orKey || !state.settings.password) { document.getElementById('setup-screen').classList.add('visible'); }
     else launchApp();
   }
+}
+
+function applyAppName() {
+  const name = state.settings.appName || 'Arbiter';
+  document.title = name;
+  const lockLogo = document.getElementById('lock-logo');
+  const sidebarBrand = document.getElementById('sidebar-brand');
+  const emptyTitle = document.getElementById('empty-title');
+  if (lockLogo) lockLogo.textContent = name;
+  if (sidebarBrand) sidebarBrand.textContent = name;
+  if (emptyTitle) emptyTitle.textContent = name;
 }
 
 function save() { try { localStorage.setItem('arbiter_v2', JSON.stringify(state)); } catch(e) {} }
@@ -705,7 +771,13 @@ function save() { try { localStorage.setItem('arbiter_v2', JSON.stringify(state)
 function tryUnlock() {
   const inp = document.getElementById('lock-input');
   const err = document.getElementById('lock-error');
-  if (inp.value === PASSWORD) {
+  if (!state.settings.password) {
+    // no password set yet, go to setup
+    document.getElementById('lock-screen').style.display = 'none';
+    document.getElementById('setup-screen').classList.add('visible');
+    return;
+  }
+  if (inp.value === state.settings.password) {
     localStorage.setItem('arbiter_unlocked', '1');
     document.getElementById('lock-screen').style.display = 'none';
     if (!state.settings.orKey) { document.getElementById('setup-screen').classList.add('visible'); }
@@ -717,15 +789,89 @@ function tryUnlock() {
   }
 }
 
+function showQuickConnect() {
+  document.getElementById('setup-full').style.display = 'none';
+  document.getElementById('setup-quick').style.display = 'block';
+}
+
+function showFullSetup() {
+  document.getElementById('setup-quick').style.display = 'none';
+  document.getElementById('setup-full').style.display = 'block';
+}
+
 function saveSetup() {
   const key = document.getElementById('setup-or-key').value.trim();
+  const password = document.getElementById('setup-password').value.trim();
+  const appName = document.getElementById('setup-app-name').value.trim() || 'Arbiter';
+  const sbUrl = document.getElementById('setup-sb-url').value.trim();
+  const sbKey = document.getElementById('setup-sb-key').value.trim();
   if (!key) { toast('OpenRouter API key required'); return; }
+  if (!password) { toast('Please set a passphrase'); return; }
   state.settings.orKey = key;
-  state.settings.sbUrl = document.getElementById('setup-sb-url').value.trim();
-  state.settings.sbKey = document.getElementById('setup-sb-key').value.trim();
+  state.settings.password = password;
+  state.settings.appName = appName;
+  state.settings.sbUrl = sbUrl;
+  state.settings.sbKey = sbKey;
+  localStorage.setItem('arbiter_unlocked', '1');
   save();
   document.getElementById('setup-screen').classList.remove('visible');
+  applyAppName();
+  // push settings to Supabase if configured
+  if (sbUrl && sbKey) pushSettingsToSupabase();
   launchApp();
+}
+
+async function quickConnect() {
+  const sbUrl = document.getElementById('quick-sb-url').value.trim();
+  const sbKey = document.getElementById('quick-sb-key').value.trim();
+  if (!sbUrl || !sbKey) { toast('Both Supabase fields required'); return; }
+
+  toast('Connecting...');
+  try {
+    const res = await fetch(`${sbUrl}/rest/v1/settings?select=key,value`, {
+      headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
+    });
+    if (!res.ok) throw new Error('Could not reach Supabase');
+    const rows = await res.json();
+    if (!rows.length) { toast('No existing setup found in Supabase'); return; }
+
+    const settingsMap = {};
+    rows.forEach(r => { try { settingsMap[r.key] = JSON.parse(r.value); } catch(e) { settingsMap[r.key] = r.value; } });
+
+    state.settings = {
+      ...state.settings,
+      ...settingsMap,
+      sbUrl,
+      sbKey
+    };
+    localStorage.setItem('arbiter_unlocked', '1');
+    save();
+    document.getElementById('setup-screen').classList.remove('visible');
+    applyAppName();
+    launchApp();
+    toast('Connected! Settings loaded.');
+  } catch(e) {
+    toast('Error: ' + (e.message || 'Connection failed'));
+  }
+}
+
+async function pushSettingsToSupabase() {
+  if (!state.settings.sbUrl || !state.settings.sbKey) return;
+  const toSync = ['appName', 'password', 'orKey', 'autoMemory'];
+  try {
+    for (const key of toSync) {
+      await fetch(`${state.settings.sbUrl}/rest/v1/settings`, {
+        method: 'POST',
+        headers: {
+          'apikey': state.settings.sbKey,
+          'Authorization': `Bearer ${state.settings.sbKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ key, value: JSON.stringify(state.settings[key]), updated_at: new Date().toISOString() })
+      });
+    }
+  } catch(e) {}
 }
 
 function launchApp() {
@@ -975,6 +1121,8 @@ function getAttachmentSummary() {
   if (!pendingAttachments.length) return '';
   return ' [' + pendingAttachments.map(a => a.name).join(', ') + ']';
 }
+
+function fmt(t) {
   if (!t) return '';
   t = esc(t);
   t = t.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
@@ -1163,11 +1311,28 @@ function loadSettingsPanel() {
   document.getElementById('sb-url-input').value = state.settings.sbUrl||'';
   document.getElementById('sb-key-input').value = state.settings.sbKey||'';
   document.getElementById('auto-memory-toggle').checked = !!state.settings.autoMemory;
+  document.getElementById('app-name-input').value = state.settings.appName||'Arbiter';
+  document.getElementById('new-password-input').value = '';
 }
 
-function saveApiKey() { state.settings.orKey=document.getElementById('or-key-input').value.trim(); save(); toast('API key saved'); }
-function saveSupabase() { state.settings.sbUrl=document.getElementById('sb-url-input').value.trim(); state.settings.sbKey=document.getElementById('sb-key-input').value.trim(); save(); updateSupabaseStatus(); toast('Supabase saved'); }
-function saveSettings() { state.settings.autoMemory=document.getElementById('auto-memory-toggle').checked; save(); }
+function saveAppName() {
+  const val = document.getElementById('app-name-input').value.trim();
+  if (!val) return;
+  state.settings.appName = val;
+  save(); applyAppName(); pushSettingsToSupabase(); toast('App name updated');
+}
+
+function savePassword() {
+  const val = document.getElementById('new-password-input').value.trim();
+  if (!val) { toast('Passphrase cannot be empty'); return; }
+  state.settings.password = val;
+  save(); pushSettingsToSupabase(); toast('Passphrase updated');
+  document.getElementById('new-password-input').value = '';
+}
+
+function saveApiKey() { state.settings.orKey=document.getElementById('or-key-input').value.trim(); save(); pushSettingsToSupabase(); toast('API key saved'); }
+function saveSupabase() { state.settings.sbUrl=document.getElementById('sb-url-input').value.trim(); state.settings.sbKey=document.getElementById('sb-key-input').value.trim(); save(); updateSupabaseStatus(); pushSettingsToSupabase(); toast('Supabase saved'); }
+function saveSettings() { state.settings.autoMemory=document.getElementById('auto-memory-toggle').checked; save(); pushSettingsToSupabase(); }
 
 function updateSupabaseStatus() {
   const dot=document.getElementById('sb-status-dot'); const txt=document.getElementById('sb-status-text');
