@@ -289,7 +289,13 @@
   @keyframes blink { 0%,60%,100% { opacity: 0.3; } 30% { opacity: 1; } }
 
   /* INPUT */
-  .input-area { padding: 12px 24px 20px; flex-shrink: 0; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .input-area {
+    padding: 12px 24px max(20px, env(safe-area-inset-bottom));
+    flex-shrink: 0;
+    background: var(--bg);
+    position: relative;
+    z-index: 10;
+  }
   .input-box {
     max-width: 720px; margin: 0 auto;
     background: var(--surface); border: 1px solid var(--border);
@@ -745,17 +751,22 @@ function init() {
   document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => { el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); }); });
 
-  // fix iOS keyboard gap
+  // fix iOS keyboard gap — offset input area by viewport position
   if (window.visualViewport) {
-    const adjustLayout = () => {
-      const height = window.visualViewport.height;
-      document.documentElement.style.height = height + 'px';
-      document.body.style.height = height + 'px';
-      const app = document.getElementById('app');
-      if (app) app.style.height = height + 'px';
+    const inputArea = () => document.querySelector('.input-area');
+    const adjust = () => {
+      const vv = window.visualViewport;
+      const el = inputArea();
+      if (!el) return;
+      // when keyboard is up, offsetTop > 0; push input up by that amount
+      const offset = window.innerHeight - vv.height - vv.offsetTop;
+      el.style.transform = offset > 0 ? `translateY(-${offset}px)` : '';
+      // also shrink messages area
+      const wrap = document.getElementById('messages-wrap');
+      if (wrap) wrap.style.marginBottom = offset > 0 ? `${offset}px` : '';
     };
-    window.visualViewport.addEventListener('resize', adjustLayout);
-    window.visualViewport.addEventListener('scroll', adjustLayout);
+    window.visualViewport.addEventListener('resize', adjust);
+    window.visualViewport.addEventListener('scroll', adjust);
   }
 
   applyAppName();
