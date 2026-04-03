@@ -1281,6 +1281,13 @@ function launchApp() {
   updateSupabaseStatus();
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
   initScrollWatcher();
+
+  // re-sync when app comes back into focus
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
+      syncFromSupabase();
+    }
+  });
   if (state.settings.sbUrl && state.settings.sbKey) {
     syncFromSupabase();
     syncSettingsFromSupabase();
@@ -1356,7 +1363,7 @@ function loadChat(id) {
 
 function renderChatList() {
   const el = document.getElementById('chat-list');
-  const entries = Object.entries(state.chats).sort((a,b) => b[1].createdAt - a[1].createdAt);
+  const entries = Object.entries(state.chats).sort((a,b) => (b[1].updatedAt||b[1].createdAt) - (a[1].updatedAt||a[1].createdAt));
   if (!entries.length) {
     el.innerHTML = '<div style="padding:12px 10px;font-size:12px;color:var(--text-dimmer)">No chats yet</div>';
     return;
@@ -1599,6 +1606,7 @@ async function sendMessage() {
   const displayText = text + getAttachmentSummary();
   const messageContent = buildMessageContent(text);
   chat.messages.push({ role:'user', content: displayText, rawContent: messageContent, ts: Date.now() });
+  chat.updatedAt = Date.now();
   if (chat.title === 'New Chat') chat.title = (text || pendingAttachments[0]?.name || 'Upload').slice(0, 42);
   inp.value = ''; autoResize(inp);
   pendingAttachments = []; renderUploadPreview();
