@@ -1400,12 +1400,14 @@ function renderMsg(msg, idx, chat) {
   const av = isUser ? 'YOU' : modelLabel.substring(0, 2).toUpperCase();
   const time = msg.ts ? new Date(msg.ts).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }) : '';
   const badge = !isUser && msg.model ? `<span class="model-badge">${esc(getModelLabel(msg.model))}</span>` : '';
-  const visibleCount = chat ? chat.messages.filter(m => m.role !== 'system').length : 0;
-  const isLast = idx === visibleCount - 1;
+  const visibleMsgs = chat ? chat.messages.filter(m => m.role !== 'system') : [];
+  const lastUserIdx = visibleMsgs.map((m,i) => m.role==='user' ? i : -1).filter(i=>i>=0).slice(-1)[0];
+  const lastAssistantIdx = visibleMsgs.map((m,i) => m.role==='assistant' ? i : -1).filter(i=>i>=0).slice(-1)[0];
+  const isLast = idx === visibleMsgs.length - 1;
   const actions = isUser
-    ? (isLast ? `<button class="msg-action-btn" onclick="startEdit(${idx})">Edit</button>` : '')
+    ? (idx === lastUserIdx ? `<button class="msg-action-btn" onclick="startEdit(${idx})">Edit</button>` : '')
     : `<button class="msg-action-btn" onclick="copyMsg(${idx})">Copy</button>`
-      + (isLast ? `<button class="msg-action-btn" onclick="regenerate(${idx})">Regenerate</button>` : '');
+      + (idx === lastAssistantIdx ? `<button class="msg-action-btn" onclick="regenerate(${idx})">Regenerate</button>` : '');
   let extraContent = '';
   if (isUser && Array.isArray(msg.rawContent)) {
     msg.rawContent.forEach(part => {
@@ -1414,7 +1416,8 @@ function renderMsg(msg, idx, chat) {
       }
     });
   }
-  return `<div class="message ${msg.role}${isLast ? ' last-msg' : ''}" data-idx="${idx}">
+  const showAlways = (isUser && idx === lastUserIdx) || (!isUser && idx === lastAssistantIdx);
+  return `<div class="message ${msg.role}${showAlways ? ' last-msg' : ''}" data-idx="${idx}">
     <div class="msg-avatar">${av}</div>
     <div class="msg-content">
       <div class="msg-name">${isUser ? 'You' : esc(modelLabel)}</div>
