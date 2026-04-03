@@ -292,6 +292,7 @@
     transition: color 0.12s, background 0.12s; opacity: 0;
   }
   .message:hover .msg-action-btn { opacity: 1; }
+  .message.last-msg .msg-action-btn { opacity: 1; }
   .msg-action-btn:hover { color: var(--text); background: var(--surface2); }
   .chat-delete-btn {
     background: none; border: none; color: var(--text-dimmer); cursor: pointer;
@@ -1413,7 +1414,7 @@ function renderMsg(msg, idx, chat) {
       }
     });
   }
-  return `<div class="message ${msg.role}" data-idx="${idx}">
+  return `<div class="message ${msg.role}${isLast ? ' last-msg' : ''}" data-idx="${idx}">
     <div class="msg-avatar">${av}</div>
     <div class="msg-content">
       <div class="msg-name">${isUser ? 'You' : esc(modelLabel)}</div>
