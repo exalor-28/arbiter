@@ -77,7 +77,6 @@
     flex-direction: column;
     font-size: 14px;
     line-height: 1.6;
-    padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
     transition: background 0.2s, color 0.2s;
@@ -169,7 +168,7 @@
     .input-area { padding: 8px 10px max(16px, env(safe-area-inset-bottom)); }
     .topbar { padding: 6px 10px; height: auto; min-height: 48px; }
     .msg-avatar { width: 26px; height: 26px; font-size: 10px; }
-    .msg-text { font-size: 13px; }
+    .msg-text { font-size: 15px; }
     .panel { width: 98vw; max-width: 98vw; margin: 8px; }
     .setup-form { width: 100%; max-width: 380px; }
     .lock-form { width: 88vw; max-width: 300px; }
@@ -209,8 +208,8 @@
   /* ── TOPBAR ── */
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px; border-bottom: 1px solid var(--border-subtle);
-    flex-shrink: 0; height: 52px; gap: 10px;
+    padding: max(10px, env(safe-area-inset-top)) 16px 10px; border-bottom: 1px solid var(--border-subtle);
+    flex-shrink: 0; min-height: 52px; gap: 10px;
   }
   .topbar-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
   .topbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -235,6 +234,19 @@
   .messages-wrap { flex: 1; overflow-y: auto; padding: 24px 0; min-height: 0; }
   .messages-wrap::-webkit-scrollbar { width: 6px; }
   .messages-wrap::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+  .scroll-bottom-btn {
+    position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-dim); cursor: pointer; display: none;
+    align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: opacity 0.2s, color 0.15s; z-index: 10;
+  }
+  .scroll-bottom-btn.visible { display: flex; }
+  .scroll-bottom-btn:hover { color: var(--text); }
+  .messages-container { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+
   .messages-inner {
     max-width: 720px; margin: 0 auto;
     padding: 0 24px; display: flex; flex-direction: column; gap: 24px;
@@ -263,7 +275,7 @@
   .message.assistant .msg-avatar { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
   .msg-content { flex: 1; min-width: 0; padding-top: 4px; }
   .msg-name { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
-  .msg-text { font-size: 14px; color: var(--text); line-height: 1.75; }
+  .msg-text { font-size: 16px; color: var(--text); line-height: 1.75; }
   .msg-text p { margin-bottom: 10px; }
   .msg-text p:last-child { margin-bottom: 0; }
   .msg-text code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; font-size: 13px; font-family: monospace; color: var(--code-color); }
@@ -622,6 +634,7 @@
       </div>
     </div>
 
+    <div class="messages-container">
     <div class="messages-wrap" id="messages-wrap">
       <div class="messages-inner" id="messages-inner">
         <div class="empty-state">
@@ -630,6 +643,10 @@
           <div class="empty-subtitle" id="empty-subtitle">Select a model and start chatting.</div>
         </div>
       </div>
+    </div>
+    <button class="scroll-bottom-btn" id="scroll-bottom-btn" onclick="scrollBottom()" title="Scroll to bottom">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
     </div>
 
     <div class="input-area">
@@ -1264,6 +1281,7 @@ function launchApp() {
   loadSettingsPanel();
   updateSupabaseStatus();
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
+  initScrollWatcher();
   if (state.settings.sbUrl && state.settings.sbKey) {
     syncFromSupabase();
     syncSettingsFromSupabase();
@@ -1371,20 +1389,22 @@ function renderMessages() {
     </div>`;
     return;
   }
-  wrap.innerHTML = chat.messages.filter(m => m.role !== 'system').map((m, i) => renderMsg(m, i)).join('');
+  wrap.innerHTML = chat.messages.filter(m => m.role !== 'system').map((m, i) => renderMsg(m, i, chat)).join('');
   scrollBottom();
 }
 
-function renderMsg(msg, idx) {
+function renderMsg(msg, idx, chat) {
   const isUser = msg.role === 'user';
   const modelLabel = msg.model ? getModelLabel(msg.model) : 'AI';
   const av = isUser ? 'YOU' : modelLabel.substring(0, 2).toUpperCase();
   const time = msg.ts ? new Date(msg.ts).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }) : '';
   const badge = !isUser && msg.model ? `<span class="model-badge">${esc(getModelLabel(msg.model))}</span>` : '';
+  const visibleCount = chat ? chat.messages.filter(m => m.role !== 'system').length : 0;
+  const isLast = idx === visibleCount - 1;
   const actions = isUser
-    ? `<button class="msg-action-btn" onclick="startEdit(${idx})">Edit</button>`
-    : `<button class="msg-action-btn" onclick="copyMsg(${idx})">Copy</button>
-       <button class="msg-action-btn" onclick="regenerate(${idx})">Regenerate</button>`;
+    ? (isLast ? `<button class="msg-action-btn" onclick="startEdit(${idx})">Edit</button>` : '')
+    : `<button class="msg-action-btn" onclick="copyMsg(${idx})">Copy</button>`
+      + (isLast ? `<button class="msg-action-btn" onclick="regenerate(${idx})">Regenerate</button>` : '');
   let extraContent = '';
   if (isUser && Array.isArray(msg.rawContent)) {
     msg.rawContent.forEach(part => {
@@ -1543,7 +1563,27 @@ function fmt(t) {
 }
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function scrollBottom() { const w=document.getElementById('messages-wrap'); setTimeout(()=>w.scrollTop=w.scrollHeight,30); }
+function scrollBottom() {
+  const w = document.getElementById('messages-wrap');
+  setTimeout(() => { w.scrollTop = w.scrollHeight; }, 30);
+}
+
+function scrollToMessage(idx) {
+  setTimeout(() => {
+    const el = document.querySelector(`[data-idx="${idx}"]`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 50);
+}
+
+function initScrollWatcher() {
+  const wrap = document.getElementById('messages-wrap');
+  const btn = document.getElementById('scroll-bottom-btn');
+  if (!wrap || !btn) return;
+  wrap.addEventListener('scroll', () => {
+    const distFromBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
+    btn.classList.toggle('visible', distFromBottom > 120);
+  });
+}
 
 // ── SEND ──
 async function sendMessage() {
@@ -1567,7 +1607,9 @@ async function sendMessage() {
     const reply = await callOR(buildMsgs(chat, text));
     hideTyping();
     chat.messages.push({ role:'assistant', content: reply, model: state.activeModel, ts: Date.now() });
+    const newMsgIdx = chat.messages.filter(m => m.role !== 'system').length - 1;
     save(); renderMessages(); renderChatList();
+    scrollToMessage(newMsgIdx);
     if (state.settings.autoMemory) extractMemory(text, reply);
     if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
   } catch(e) {
