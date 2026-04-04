@@ -1547,6 +1547,8 @@ function newChat() {
 
 function loadChat(id) {
   state.currentChatId = id;
+  renderChatList();
+  if (typeof renderMessages === "function") renderMessages();
   const c = state.chats[id];
   if (c) {
     state.activeModel = c.model;
