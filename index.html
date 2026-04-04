@@ -44,31 +44,31 @@
   /* ── LIGHT THEME ── */
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #f5f7fb;
+      --bg: #f4f6fb;
       --bg-elevated: #ffffff;
-      --sidebar: rgba(255,255,255,0.78);
-      --surface: rgba(255,255,255,0.88);
-      --surface2: rgba(243,246,252,0.92);
-      --surface3: rgba(233,239,248,0.98);
-      --border: rgba(20,26,40,0.08);
-      --border-subtle: rgba(20,26,40,0.05);
-      --text: #172033;
-      --text-dim: #69768d;
-      --text-dimmer: #98a3b7;
-      --accent: #32ade6;
-      --accent-strong: #007aff;
+      --sidebar: rgba(255,255,255,0.82);
+      --surface: rgba(255,255,255,0.86);
+      --surface2: rgba(247,249,253,0.92);
+      --surface3: rgba(237,242,250,0.98);
+      --border: rgba(17,24,39,0.08);
+      --border-subtle: rgba(17,24,39,0.045);
+      --text: #162033;
+      --text-dim: #66748b;
+      --text-dimmer: #94a0b3;
+      --accent: #5b8cff;
+      --accent-strong: #3f6fff;
       --danger: #dc2626;
-      --panel-bg: rgba(255,255,255,0.84);
-      --panel-border: rgba(20,26,40,0.08);
-      --input-bg: rgba(249,251,255,0.92);
-      --scrollbar: rgba(20,26,40,0.16);
+      --panel-bg: rgba(255,255,255,0.78);
+      --panel-border: rgba(17,24,39,0.08);
+      --input-bg: rgba(251,252,255,0.92);
+      --scrollbar: rgba(17,24,39,0.14);
       --priority-high-bg: rgba(220,38,38,0.08);
       --priority-high-text: #dc2626;
       --priority-med-bg: rgba(245,158,11,0.12);
       --priority-med-text: #b45309;
-      --priority-low-bg: rgba(0,122,255,0.10);
-      --priority-low-text: #007aff;
-      --code-color: #0d6efd;
+      --priority-low-bg: rgba(63,111,255,0.10);
+      --priority-low-text: #3f6fff;
+      --code-color: #315efb;
     }
   }
 
@@ -203,7 +203,7 @@
     display: flex; align-items: center; justify-content: space-between;
     padding: 4px 4px 4px 8px;
   }
-  .sidebar-brand { font-size: 15px; font-weight: 600; color: var(--text); }
+  .sidebar-brand { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
   .icon-sm {
     width: 34px; height: 34px; border-radius: 10px; background: transparent; border: 1px solid transparent;
     color: var(--text-dim); cursor: pointer; display: flex;
@@ -303,8 +303,8 @@
     background: var(--surface); display: flex;
     align-items: center; justify-content: center; font-size: 22px; margin: 0 auto;
   }
-  .empty-title { font-size: 20px; font-weight: 600; }
-  .empty-subtitle { font-size: 14px; color: var(--text-dim); max-width: 340px; line-height: 1.6; }
+  .empty-title { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }
+  .empty-subtitle { font-size: 14px; color: var(--text-dim); max-width: 360px; line-height: 1.75; letter-spacing: -0.01em; }
 
   .message { display: flex; gap: 14px; animation: fadeIn 0.18s ease; }
   .message.assistant .msg-content {
@@ -600,6 +600,81 @@
     border: 1px solid rgba(16,163,127,0.18);
   }
   .msg-source-chip:hover { background: rgba(16,163,127,0.16); }
+
+
+  @media (prefers-color-scheme: light) {
+    body {
+      background:
+        radial-gradient(1100px 680px at 85% -10%, rgba(91,140,255,0.10), transparent 58%),
+        radial-gradient(820px 480px at 8% 12%, rgba(143,184,255,0.10), transparent 54%),
+        linear-gradient(180deg, #ffffff 0%, #f4f6fb 100%);
+    }
+    #sidebar {
+      box-shadow: inset -1px 0 0 rgba(17,24,39,0.04);
+    }
+    .topbar {
+      background: rgba(255,255,255,0.72);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+    .message.assistant .msg-content {
+      background: rgba(255,255,255,0.74);
+      border-color: rgba(17,24,39,0.06);
+      box-shadow: 0 8px 24px rgba(17,24,39,0.04), inset 0 1px 0 rgba(255,255,255,0.72);
+    }
+    .input-box {
+      background: rgba(255,255,255,0.82);
+      box-shadow: 0 16px 36px rgba(17,24,39,0.06), inset 0 1px 0 rgba(255,255,255,0.86);
+    }
+    .input-box:focus-within {
+      border-color: rgba(63,111,255,0.22);
+      box-shadow: 0 18px 40px rgba(17,24,39,0.08), inset 0 1px 0 rgba(255,255,255,0.92);
+    }
+    .chat-item:hover {
+      background: rgba(255,255,255,0.64);
+      border-color: rgba(17,24,39,0.06);
+    }
+    .chat-item.active {
+      background: rgba(255,255,255,0.78);
+      border-color: rgba(63,111,255,0.16);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 22px rgba(63,111,255,0.06);
+    }
+    .panel {
+      background: rgba(255,255,255,0.78);
+      box-shadow: 0 26px 60px rgba(17,24,39,0.10), inset 0 1px 0 rgba(255,255,255,0.9);
+    }
+    .app-logo {
+      background: rgba(255,255,255,0.72);
+      color: #315efb;
+      border-color: rgba(63,111,255,0.10);
+      box-shadow: 0 12px 26px rgba(17,24,39,0.06), inset 0 1px 0 rgba(255,255,255,0.95);
+    }
+    .send-btn {
+      background: linear-gradient(180deg, #6f90ff, #4d72ff);
+      border-color: rgba(63,111,255,0.14);
+      box-shadow: 0 12px 24px rgba(63,111,255,0.16);
+    }
+    .msg-source-chip {
+      background: rgba(63,111,255,0.08);
+      border-color: rgba(63,111,255,0.12);
+      color: #315efb;
+    }
+  }
+
+
+  @media (prefers-color-scheme: dark) {
+    .topbar {
+      background: rgba(20,25,38,0.62);
+    }
+    .message.assistant .msg-content {
+      box-shadow: 0 12px 28px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .input-box {
+      box-shadow: 0 18px 40px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .chat-item.active {
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px rgba(0,0,0,0.14);
+    }
+  }
 
 </style>
 </head>
@@ -1383,7 +1458,7 @@ async function quickConnect() {
 
 async function pushSettingsToSupabase() {
   if (!state.settings.sbUrl || !state.settings.sbKey) return;
-  const toSync = ['appName', 'password', 'orKey', 'autoMemory', 'webSearch'];
+  const toSync = ['appName', 'password', 'orKey', 'autoMemory', 'webSearch', 'customModels'];
   try {
     for (const key of toSync) {
       await fetch(`${state.settings.sbUrl}/rest/v1/settings`, {
@@ -1415,11 +1490,14 @@ function launchApp() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
       syncFromSupabase();
+      syncSettingsFromSupabase();
+      syncAppSettingsFromSupabase();
     }
   });
   if (state.settings.sbUrl && state.settings.sbKey) {
     syncFromSupabase();
     syncSettingsFromSupabase();
+    syncAppSettingsFromSupabase();
   }
 }
 
@@ -1457,6 +1535,36 @@ async function syncFromSupabase() {
       if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
       if (newCount > 0) toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`);
     }
+  } catch(e) {}
+}
+
+
+async function syncAppSettingsFromSupabase() {
+  if (!state.settings.sbUrl || !state.settings.sbKey) return;
+  try {
+    const res = await fetch(`${state.settings.sbUrl}/rest/v1/settings?select=key,value,updated_at`, {
+      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
+    });
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    const map = {};
+    rows.forEach(r => {
+      try { map[r.key] = JSON.parse(r.value); } catch(e) { map[r.key] = r.value; }
+    });
+
+    state.settings = {
+      ...state.settings,
+      ...map,
+      sbUrl: state.settings.sbUrl,
+      sbKey: state.settings.sbKey
+    };
+
+    save();
+    applyAppName();
+    buildModelSelect();
+    loadSettingsPanel();
   } catch(e) {}
 }
 
@@ -1920,6 +2028,7 @@ function saveSettings() {
   if (webSearchToggle) state.settings.webSearch = webSearchToggle.checked;
   save();
   pushSettingsToSupabase();
+  toast('Settings saved');
 }
 
 function updateSupabaseStatus() {
