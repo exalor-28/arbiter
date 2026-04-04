@@ -1892,6 +1892,9 @@ function buildMsgs(chat, userMessage) {
 }
 
 async function callOR(messages, useSearch = false) {
+  if (!messages || !messages.length) {
+    throw new Error("No messages provided to API");
+  }
   const payload = {
   // patched for web search model: state.activeModel, messages, temperature: 0.7, max_tokens: 2048
 };
