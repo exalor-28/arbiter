@@ -1856,7 +1856,9 @@ if (state.settings?.webSearch) {
   });
 }
 
-const useSearch = state.settings?.webSearch;
+const useSearch =
+  state.settings?.webSearch &&
+  (typeof shouldUseSearch === "function" ? shouldUseSearch(text) : true);
 const reply = await callOR(msgs, useSearch);
     hideTyping();
     chat.messages.push({ role:'assistant', content: reply, model: state.activeModel, ts: Date.now() });
@@ -1902,6 +1904,9 @@ async function callOR(messages, useSearch = false) {
   if (!messages || !messages.length) {
     throw new Error("No messages provided to API");
   }
+  if (!messages || !messages.length) {
+    throw new Error("No messages provided to API");
+  }
   const payload = {
   model: state.activeModel,
   messages,
@@ -1914,6 +1919,10 @@ if (useSearch) {
     type: "openrouter:web_search",
     max_results: 5
   }];
+  payload.tool_choice = {
+    type: "openrouter:web_search"
+  };
+}];
   payload.tool_choice = "auto";
 };
 
@@ -1922,6 +1931,10 @@ if (useSearch) {
     type: "openrouter:web_search",
     max_results: 5
   }];
+  payload.tool_choice = {
+    type: "openrouter:web_search"
+  };
+}];
   payload.tool_choice = "auto";
 }
 
@@ -2138,6 +2151,46 @@ function toast(msg, dur=2500) {
 }
 
 init();
+
+// === LEVEL UP FEATURES ===
+
+// cache
+const searchCache = new Map();
+
+function extractSources(text) {
+  const urls = [...new Set((text.match(/https?:\/\/[^\s)]+/g) || []))];
+  return urls.slice(0, 5);
+}
+
+function renderSources(container, text) {
+  const sources = extractSources(text);
+  if (!sources.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.style.marginTop = "10px";
+  wrap.style.display = "flex";
+  wrap.style.flexWrap = "wrap";
+  wrap.style.gap = "6px";
+
+  sources.forEach(url => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.innerText = new URL(url).hostname;
+
+    a.style.padding = "6px 10px";
+    a.style.borderRadius = "999px";
+    a.style.fontSize = "11px";
+    a.style.background = "rgba(0,122,255,0.1)";
+    a.style.color = "#007AFF";
+    a.style.textDecoration = "none";
+
+    wrap.appendChild(a);
+  });
+
+  container.appendChild(wrap);
+}
+
 </script>
 </body>
 </html>
