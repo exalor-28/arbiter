@@ -866,6 +866,18 @@
           <button class="btn btn-ghost" onclick="saveApiKey()">Save</button>
         </div>
       </div>
+      <div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Web search</div>
+            <div class="toggle-desc">Use OpenRouter web search on supported models.</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="web-search-toggle" onchange="saveSettings()">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
       <hr class="divider">
       <div>
         <div class="p-label" style="margin-bottom:8px">Models</div>
@@ -931,11 +943,81 @@ let state = {
   settings: {
     orKey: '', sbUrl: '', sbKey: '', autoMemory: false,
     appName: 'Arbiter', password: '',
-    customModels: []  // [{id, label}]
+    customModels: [],  // [{id, label}]
+    webSearch: false
+  },
+  meta: {
+    userSettingsUpdatedAt: 0,
+    settingsUpdatedAt: 0
   },
   sidebarOpen: true,
-  isStreaming: false
+  isStreaming: false,
+  syncTimerStarted: false,
+  syncInFlight: false
+
 };
+
+const CHAT_SYNC_PAGE_SIZE = 100;
+const BACKGROUND_SYNC_MS = 15000;
+const MAX_MEMORY_INJECTION_CHARS = 5000;
+const MAX_MEMORY_CARDS_PER_PROMPT = 8;
+const MAX_ALWAYS_ON_MEMORY_CARDS = 2;
+const MAX_AUTO_MEMORY_CARDS = 60;
+
+function touchSettingsMeta() {
+  state.meta = state.meta || {};
+  state.meta.settingsUpdatedAt = Date.now();
+}
+
+function touchUserSettingsMeta() {
+  state.meta = state.meta || {};
+  state.meta.userSettingsUpdatedAt = Date.now();
+}
+
+function dedupeMemoryCards(cards) {
+  const seen = new Set();
+  return (cards || []).filter(card => {
+    const sig = `${(card.name || '').trim().toLowerCase()}|${(card.content || '').trim().toLowerCase()}`;
+    if (!card.content || seen.has(sig)) return false;
+    seen.add(sig);
+    return true;
+  });
+}
+
+function sanitizeChatForCloud(chat) {
+  return {
+    ...chat,
+    messages: (chat.messages || []).map(m => {
+      if (!Array.isArray(m.rawContent)) return m;
+      const cleaned = m.rawContent.map(part => {
+        if (part.type === 'image_url' && part.image_url && String(part.image_url.url || '').startsWith('data:')) {
+          return { type: 'text', text: '[Image uploaded from another device. Re-upload needed to resend.]' };
+        }
+        return part;
+      });
+      return { ...m, rawContent: cleaned };
+    })
+  };
+}
+
+function buildSettingsMap(rows) {
+  const map = {};
+  (rows || []).forEach(r => {
+    try { map[r.key] = JSON.parse(r.value); } catch(e) { map[r.key] = r.value; }
+  });
+  return map;
+}
+
+function startSyncLoop() {
+  if (state.syncTimerStarted || !state.settings.sbUrl || !state.settings.sbKey) return;
+  state.syncTimerStarted = true;
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
+      syncFromSupabase();
+      syncSettingsFromSupabase();
+    }
+  }, BACKGROUND_SYNC_MS);
+}
 
 // ── SYSTEM THEME ──
 function applyThemeMeta() {
@@ -953,6 +1035,7 @@ function init() {
       const p = JSON.parse(s);
       state = { ...state, ...p };
       if (p.settings) state.settings = { ...state.settings, ...p.settings };
+      if (p.meta) state.meta = { ...state.meta, ...p.meta };
       // migrate flat memory array → memory cards if needed
       if (p.memory && Array.isArray(p.memory) && (!p.memoryCards || !p.memoryCards.length)) {
         state.memoryCards = p.memory.map((m, i) => ({
@@ -1069,6 +1152,7 @@ function removeCustomModel(i) {
 
 function saveCustomModels() {
   state.settings.customModels = (state.settings.customModels || []).filter(m => m.id && m.label);
+  touchSettingsMeta();
   save();
   buildModelSelect();
   toast('Models saved');
@@ -1076,28 +1160,35 @@ function saveCustomModels() {
 
 // ── MEMORY CARDS ──
 function selectRelevantMemories(userMessage) {
-  const cards = state.memoryCards || [];
-  const msgLower = userMessage.toLowerCase();
+  const cards = dedupeMemoryCards(state.memoryCards || []);
+  const msgLower = (userMessage || '').toLowerCase();
 
-  // Separate pinned and keyword-matched
   const pinned = cards.filter(c => c.pinned);
   const matched = cards.filter(c => !c.pinned && c.keywords && c.keywords.length > 0 &&
     c.keywords.some(kw => kw && msgLower.includes(kw.toLowerCase())));
   const noKeyword = cards.filter(c => !c.pinned && (!c.keywords || c.keywords.length === 0));
 
-  // Priority sort: high > medium > low
   const priorityOrder = { high: 0, medium: 1, low: 2 };
   const sortByPriority = arr => [...arr].sort((a, b) => (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1));
 
-  const allRelevant = [
+  const alwaysOn = sortByPriority(noKeyword).slice(0, MAX_ALWAYS_ON_MEMORY_CARDS);
+  const merged = [
     ...sortByPriority(pinned),
     ...sortByPriority(matched),
-    ...sortByPriority(noKeyword)
+    ...alwaysOn
   ];
 
-  // Deduplicate by id
   const seen = new Set();
-  return allRelevant.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+  let totalChars = 0;
+  return merged.filter(c => {
+    if (seen.has(c.id)) return false;
+    const len = (c.content || '').length;
+    if (totalChars + len > MAX_MEMORY_INJECTION_CHARS) return false;
+    if (seen.size >= MAX_MEMORY_CARDS_PER_PROMPT) return false;
+    seen.add(c.id);
+    totalChars += len;
+    return true;
+  });
 }
 
 function renderMemoryCards() {
@@ -1271,6 +1362,7 @@ function saveSetup() {
   if (!key) { toast('OpenRouter API key required'); return; }
   if (!password) { toast('Please set a passphrase'); return; }
   state.settings = { ...state.settings, orKey: key, password, appName, sbUrl, sbKey };
+  touchSettingsMeta();
   localStorage.setItem('arbiter_unlocked', '1');
   save();
   document.getElementById('setup-screen').classList.remove('visible');
@@ -1291,9 +1383,10 @@ async function quickConnect() {
     if (!res.ok) throw new Error('Could not reach Supabase');
     const rows = await res.json();
     if (!rows.length) { toast('No existing setup found in Supabase'); return; }
-    const map = {};
-    rows.forEach(r => { try { map[r.key] = JSON.parse(r.value); } catch(e) { map[r.key] = r.value; } });
+    const map = buildSettingsMap(rows);
     state.settings = { ...state.settings, ...map, sbUrl, sbKey };
+    state.meta = state.meta || {};
+    state.meta.settingsUpdatedAt = Math.max(state.meta.settingsUpdatedAt || 0, ...rows.map(r => new Date(r.updated_at || 0).getTime()).filter(Boolean), 0);
     localStorage.setItem('arbiter_unlocked', '1');
     save();
     document.getElementById('setup-screen').classList.remove('visible');
@@ -1307,7 +1400,8 @@ async function quickConnect() {
 
 async function pushSettingsToSupabase() {
   if (!state.settings.sbUrl || !state.settings.sbKey) return;
-  const toSync = ['appName', 'password', 'orKey', 'autoMemory'];
+  const toSync = ['appName', 'password', 'orKey', 'autoMemory', 'customModels', 'webSearch'];
+  const stamp = new Date(state.meta?.settingsUpdatedAt || Date.now()).toISOString();
   try {
     for (const key of toSync) {
       await fetch(`${state.settings.sbUrl}/rest/v1/settings`, {
@@ -1318,7 +1412,7 @@ async function pushSettingsToSupabase() {
           'Content-Type': 'application/json',
           'Prefer': 'resolution=merge-duplicates'
         },
-        body: JSON.stringify({ key, value: JSON.stringify(state.settings[key]), updated_at: new Date().toISOString() })
+        body: JSON.stringify({ key, value: JSON.stringify(state.settings[key]), updated_at: stamp })
       });
     }
   } catch(e) {}
@@ -1335,13 +1429,18 @@ function launchApp() {
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
   initScrollWatcher();
 
-  // re-sync when app comes back into focus
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
-      syncFromSupabase();
-    }
-  });
+  if (!window.__arbiterVisibilityBound) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
+        syncFromSupabase();
+        syncSettingsFromSupabase();
+      }
+    });
+    window.__arbiterVisibilityBound = true;
+  }
+
   if (state.settings.sbUrl && state.settings.sbKey) {
+    startSyncLoop();
     syncFromSupabase();
     syncSettingsFromSupabase();
   }
@@ -1398,7 +1497,8 @@ function closeSidebarMobile() {
 
 function newChat() {
   const id = 'c' + Date.now();
-  state.chats[id] = { title: 'New Chat', model: state.activeModel, messages: [], createdAt: Date.now() };
+  const now = Date.now();
+  state.chats[id] = { title: 'New Chat', model: state.activeModel, messages: [], createdAt: now, updatedAt: now };
   state.currentChatId = id;
   save(); renderChatList(); renderMessages();
 }
@@ -1408,7 +1508,9 @@ function loadChat(id) {
   const c = state.chats[id];
   if (c) {
     state.activeModel = c.model;
+    c.updatedAt = Date.now();
     buildModelSelect();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(id, true);
   }
   save(); renderChatList(); renderMessages();
   closeSidebarMobile();
@@ -1423,7 +1525,7 @@ function renderChatList() {
   }
   el.innerHTML = '<div class="chat-section-label">Recent</div>' +
     entries.map(([id, c]) => {
-      const d = new Date(c.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+      const d = new Date(c.updatedAt || c.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
       return `<div class="chat-item ${id===state.currentChatId?'active':''}" onclick="loadChat('${id}')">
         <div class="chat-item-title">${esc(c.title)}</div>
         <div class="chat-item-meta" style="display:flex;align-items:center;justify-content:space-between">
@@ -1689,8 +1791,10 @@ async function sendMessage() {
     const reply = await callOR(buildMsgs(chat, text));
     hideTyping();
     chat.messages.push({ role:'assistant', content: reply, model: state.activeModel, ts: Date.now() });
+    chat.updatedAt = Date.now();
     const newMsgIdx = chat.messages.filter(m => m.role !== 'system').length - 1;
     save(); renderMessages(); renderChatList();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId, true); renderChatList();
     scrollToMessage(newMsgIdx);
     if (state.settings.autoMemory) extractMemory(text, reply);
     if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
@@ -1699,6 +1803,7 @@ async function sendMessage() {
     const errMsg = e.message || 'Request failed';
     toast('Error: ' + errMsg, 4000);
     chat.messages.push({ role:'assistant', content:`⚠️ Error: ${errMsg}`, model: state.activeModel, ts: Date.now(), isError: true });
+    chat.updatedAt = Date.now();
     save(); renderMessages();
   }
   state.isStreaming = false;
@@ -1725,6 +1830,10 @@ function buildMsgs(chat, userMessage) {
 }
 
 async function callOR(messages) {
+  const payload = { model: state.activeModel, messages, temperature: 0.7, max_tokens: 2048 };
+  if (state.settings.webSearch) {
+    payload.tools = [{ type: 'web_search' }];
+  }
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -1733,11 +1842,11 @@ async function callOR(messages) {
       'HTTP-Referer': window.location.href,
       'X-Title': state.settings.appName || 'Arbiter'
     },
-    body: JSON.stringify({ model: state.activeModel, messages, temperature: 0.7, max_tokens: 2048 })
+    body: JSON.stringify(payload)
   });
   if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error?.message || `HTTP ${res.status}`); }
   const data = await res.json();
-  return data.choices[0].message.content;
+  return data.choices?.[0]?.message?.content || '';
 }
 
 function showTyping() {
@@ -1792,6 +1901,7 @@ function loadInstructionsPanel() {
 function saveInstructions() {
   state.instructions.about = document.getElementById('instructions-about').value.trim();
   state.instructions.style = document.getElementById('instructions-style').value.trim();
+  touchUserSettingsMeta();
   save();
   if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
   closePanel('instructions-panel'); toast('Instructions saved');
@@ -1803,6 +1913,7 @@ function loadSettingsPanel() {
   document.getElementById('sb-url-input').value = state.settings.sbUrl || '';
   document.getElementById('sb-key-input').value = state.settings.sbKey || '';
   document.getElementById('auto-memory-toggle').checked = !!state.settings.autoMemory;
+  const webSearchToggle = document.getElementById('web-search-toggle'); if (webSearchToggle) webSearchToggle.checked = !!state.settings.webSearch;
   document.getElementById('app-name-input').value = state.settings.appName || 'Arbiter';
   document.getElementById('new-password-input').value = '';
   loadCustomModelsList();
@@ -1812,6 +1923,7 @@ function saveAppName() {
   const val = document.getElementById('app-name-input').value.trim();
   if (!val) return;
   state.settings.appName = val;
+  touchSettingsMeta();
   save(); applyAppName(); pushSettingsToSupabase(); toast('App name updated');
 }
 
@@ -1819,13 +1931,14 @@ function savePassword() {
   const val = document.getElementById('new-password-input').value.trim();
   if (!val) { toast('Passphrase cannot be empty'); return; }
   state.settings.password = val;
+  touchSettingsMeta();
   save(); pushSettingsToSupabase(); toast('Passphrase updated');
   document.getElementById('new-password-input').value = '';
 }
 
-function saveApiKey() { state.settings.orKey = document.getElementById('or-key-input').value.trim(); save(); pushSettingsToSupabase(); toast('API key saved'); }
-function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); save(); updateSupabaseStatus(); pushSettingsToSupabase(); toast('Supabase saved'); }
-function saveSettings() { state.settings.autoMemory = document.getElementById('auto-memory-toggle').checked; save(); pushSettingsToSupabase(); }
+function saveApiKey() { state.settings.orKey = document.getElementById('or-key-input').value.trim(); touchSettingsMeta(); save(); pushSettingsToSupabase(); toast('API key saved'); }
+function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); touchSettingsMeta(); save(); updateSupabaseStatus(); startSyncLoop(); pushSettingsToSupabase(); toast('Supabase saved'); }
+function saveSettings() { state.settings.autoMemory = document.getElementById('auto-memory-toggle').checked; const ws = document.getElementById('web-search-toggle'); if (ws) state.settings.webSearch = ws.checked; touchSettingsMeta(); save(); pushSettingsToSupabase(); }
 
 function updateSupabaseStatus() {
   const dot = document.getElementById('sb-status-dot');
@@ -1837,29 +1950,35 @@ function updateSupabaseStatus() {
   }
 }
 
-async function syncSupabase(chatId) {
-  const chat = state.chats[chatId]; if (!chat) return;
+async function syncSupabase(chatId, quiet = false) {
+  const chat = state.chats[chatId]; if (!chat || !state.settings.sbUrl || !state.settings.sbKey) return;
   chat.updatedAt = Date.now();
+  const chatForCloud = sanitizeChatForCloud(chat);
   try {
     await fetch(`${state.settings.sbUrl}/rest/v1/chats`, {
       method: 'POST',
       headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: chatId, title: chat.title, model: chat.model, messages: JSON.stringify(chat.messages), updated_at: new Date().toISOString() })
+      body: JSON.stringify({ id: chatId, title: chatForCloud.title, model: chatForCloud.model, messages: JSON.stringify(chatForCloud.messages), updated_at: new Date(chat.updatedAt).toISOString() })
     });
-  } catch(e) {}
+  } catch(e) {
+    if (!quiet) toast('Cloud sync failed');
+  }
 }
 
 async function syncSettingsToSupabase() {
+  if (!state.settings.sbUrl || !state.settings.sbKey) return;
+  const stamp = new Date(state.meta?.userSettingsUpdatedAt || Date.now()).toISOString();
   try {
     await fetch(`${state.settings.sbUrl}/rest/v1/user_settings`, {
       method: 'POST',
       headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: 'main', memory: JSON.stringify(state.memoryCards), instructions: JSON.stringify(state.instructions), updated_at: new Date().toISOString() })
+      body: JSON.stringify({ id: 'main', memory: JSON.stringify(dedupeMemoryCards(state.memoryCards)), instructions: JSON.stringify(state.instructions), updated_at: stamp })
     });
   } catch(e) {}
 }
 
 async function syncSettingsFromSupabase() {
+  if (!state.settings.sbUrl || !state.settings.sbKey) return;
   try {
     const res = await fetch(`${state.settings.sbUrl}/rest/v1/user_settings?id=eq.main&select=*`, {
       headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
@@ -1868,8 +1987,13 @@ async function syncSettingsFromSupabase() {
     const rows = await res.json();
     if (!rows.length) return;
     const row = rows[0];
-    if (row.memory) state.memoryCards = JSON.parse(row.memory);
+    const remoteUpdated = new Date(row.updated_at || 0).getTime();
+    const localUpdated = state.meta?.userSettingsUpdatedAt || 0;
+    if (remoteUpdated && remoteUpdated <= localUpdated) return;
+    if (row.memory) state.memoryCards = dedupeMemoryCards(JSON.parse(row.memory));
     if (row.instructions) state.instructions = JSON.parse(row.instructions);
+    state.meta = state.meta || {};
+    state.meta.userSettingsUpdatedAt = remoteUpdated || Date.now();
     save(); renderMemoryCards(); loadInstructionsPanel();
   } catch(e) {}
 }
