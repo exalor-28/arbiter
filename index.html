@@ -1008,13 +1008,22 @@ function buildSettingsMap(rows) {
   return map;
 }
 
+async function runCloudSync() {
+  if (state.syncInFlight || !state.settings.sbUrl || !state.settings.sbKey) return;
+  state.syncInFlight = true;
+  try {
+    await Promise.all([syncFromSupabase(), syncSettingsFromSupabase()]);
+  } finally {
+    state.syncInFlight = false;
+  }
+}
+
 function startSyncLoop() {
   if (state.syncTimerStarted || !state.settings.sbUrl || !state.settings.sbKey) return;
   state.syncTimerStarted = true;
   setInterval(() => {
     if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
-      syncFromSupabase();
-      syncSettingsFromSupabase();
+      runCloudSync();
     }
   }, BACKGROUND_SYNC_MS);
 }
@@ -1441,38 +1450,54 @@ function launchApp() {
 
   if (state.settings.sbUrl && state.settings.sbKey) {
     startSyncLoop();
-    syncFromSupabase();
-    syncSettingsFromSupabase();
+    runCloudSync();
   }
 }
 
 async function syncFromSupabase() {
+  if (!state.settings.sbUrl || !state.settings.sbKey) return;
   try {
-    const res = await fetch(`${state.settings.sbUrl}/rest/v1/chats?select=*&order=updated_at.desc&limit=100`, {
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
-    });
-    if (!res.ok) return;
-    const rows = await res.json();
-    if (!Array.isArray(rows) || !rows.length) return;
+    let offset = 0;
     let newCount = 0;
-    rows.forEach(row => {
-      const local = state.chats[row.id];
-      const remoteUpdated = new Date(row.updated_at).getTime();
-      const localUpdated = local ? (local.updatedAt || local.createdAt || 0) : 0;
-      if (!local || remoteUpdated > localUpdated) {
-        try {
-          state.chats[row.id] = {
-            title: row.title,
-            model: row.model,
-            messages: typeof row.messages === 'string' ? JSON.parse(row.messages) : row.messages,
-            createdAt: local?.createdAt || remoteUpdated,
-            updatedAt: remoteUpdated
-          };
-          if (!local) newCount++;
-        } catch(e) {}
-      }
-    });
-    if (newCount > 0) { save(); renderChatList(); toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`); }
+    let changed = false;
+
+    while (true) {
+      const res = await fetch(`${state.settings.sbUrl}/rest/v1/chats?select=*&order=updated_at.desc&limit=${CHAT_SYNC_PAGE_SIZE}&offset=${offset}`, {
+        headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
+      });
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (!Array.isArray(rows) || !rows.length) break;
+
+      rows.forEach(row => {
+        const local = state.chats[row.id];
+        const remoteUpdated = new Date(row.updated_at).getTime();
+        const localUpdated = local ? (local.updatedAt || local.createdAt || 0) : 0;
+        if (!local || remoteUpdated > localUpdated) {
+          try {
+            state.chats[row.id] = {
+              title: row.title,
+              model: row.model,
+              messages: typeof row.messages === 'string' ? JSON.parse(row.messages) : row.messages,
+              createdAt: local?.createdAt || remoteUpdated,
+              updatedAt: remoteUpdated
+            };
+            changed = true;
+            if (!local) newCount++;
+          } catch(e) {}
+        }
+      });
+
+      if (rows.length < CHAT_SYNC_PAGE_SIZE) break;
+      offset += CHAT_SYNC_PAGE_SIZE;
+    }
+
+    if (changed) {
+      save();
+      renderChatList();
+      if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
+      if (newCount > 0) toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`);
+    }
   } catch(e) {}
 }
 
@@ -1508,9 +1533,7 @@ function loadChat(id) {
   const c = state.chats[id];
   if (c) {
     state.activeModel = c.model;
-    c.updatedAt = Date.now();
     buildModelSelect();
-    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(id, true);
   }
   save(); renderChatList(); renderMessages();
   closeSidebarMobile();
@@ -1794,17 +1817,17 @@ async function sendMessage() {
     chat.updatedAt = Date.now();
     const newMsgIdx = chat.messages.filter(m => m.role !== 'system').length - 1;
     save(); renderMessages(); renderChatList();
-    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId, true); renderChatList();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId, true);
     scrollToMessage(newMsgIdx);
     if (state.settings.autoMemory) extractMemory(text, reply);
-    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
   } catch(e) {
     hideTyping();
     const errMsg = e.message || 'Request failed';
     toast('Error: ' + errMsg, 4000);
     chat.messages.push({ role:'assistant', content:`⚠️ Error: ${errMsg}`, model: state.activeModel, ts: Date.now(), isError: true });
     chat.updatedAt = Date.now();
-    save(); renderMessages();
+    save(); renderMessages(); renderChatList();
+    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId, true);
   }
   state.isStreaming = false;
   document.getElementById('send-btn').disabled = false;
@@ -1832,7 +1855,7 @@ function buildMsgs(chat, userMessage) {
 async function callOR(messages) {
   const payload = { model: state.activeModel, messages, temperature: 0.7, max_tokens: 2048 };
   if (state.settings.webSearch) {
-    payload.tools = [{ type: 'web_search' }];
+    payload.tools = [{ type: 'openrouter:web_search', parameters: { max_results: 5, search_context_size: 'medium' } }];
   }
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -1873,21 +1896,32 @@ async function extractMemory(userMsg, assistantMsg) {
     const facts = JSON.parse(data.choices[0].message.content.trim());
     if (Array.isArray(facts) && facts.length) {
       if (!state.memoryCards) state.memoryCards = [];
+      const existing = new Set(state.memoryCards.map(card => ((card.content || '').trim().toLowerCase())));
+      let added = 0;
+
       facts.forEach(f => {
-        if (typeof f === 'string' && f.trim()) {
-          state.memoryCards.push({
-            id: 'mc_auto_' + Date.now() + '_' + Math.random().toString(36).slice(2),
-            name: 'Auto: ' + f.trim().slice(0, 40),
-            priority: 'medium',
-            keywords: [],
-            content: f.trim(),
-            pinned: false
-          });
-        }
+        const clean = typeof f === 'string' ? f.trim() : '';
+        const sig = clean.toLowerCase();
+        if (!clean || existing.has(sig)) return;
+        existing.add(sig);
+        state.memoryCards.push({
+          id: 'mc_auto_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+          name: 'Auto: ' + clean.slice(0, 40),
+          priority: 'medium',
+          keywords: [],
+          content: clean,
+          pinned: false
+        });
+        added++;
       });
-      save(); renderMemoryCards();
-      if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
-      toast(`${facts.length} memory fact${facts.length>1?'s':''} saved`);
+
+      state.memoryCards = dedupeMemoryCards(state.memoryCards).slice(-MAX_AUTO_MEMORY_CARDS);
+      if (added) {
+        touchUserSettingsMeta();
+        save(); renderMemoryCards();
+        if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+        toast(`${added} memory fact${added>1?'s':''} saved`);
+      }
     }
   } catch(e) {}
 }
@@ -1937,7 +1971,7 @@ function savePassword() {
 }
 
 function saveApiKey() { state.settings.orKey = document.getElementById('or-key-input').value.trim(); touchSettingsMeta(); save(); pushSettingsToSupabase(); toast('API key saved'); }
-function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); touchSettingsMeta(); save(); updateSupabaseStatus(); startSyncLoop(); pushSettingsToSupabase(); toast('Supabase saved'); }
+function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); touchSettingsMeta(); save(); updateSupabaseStatus(); startSyncLoop(); pushSettingsToSupabase(); runCloudSync(); toast('Supabase saved'); }
 function saveSettings() { state.settings.autoMemory = document.getElementById('auto-memory-toggle').checked; const ws = document.getElementById('web-search-toggle'); if (ws) state.settings.webSearch = ws.checked; touchSettingsMeta(); save(); pushSettingsToSupabase(); }
 
 function updateSupabaseStatus() {
@@ -1952,13 +1986,12 @@ function updateSupabaseStatus() {
 
 async function syncSupabase(chatId, quiet = false) {
   const chat = state.chats[chatId]; if (!chat || !state.settings.sbUrl || !state.settings.sbKey) return;
-  chat.updatedAt = Date.now();
   const chatForCloud = sanitizeChatForCloud(chat);
   try {
     await fetch(`${state.settings.sbUrl}/rest/v1/chats`, {
       method: 'POST',
       headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: chatId, title: chatForCloud.title, model: chatForCloud.model, messages: JSON.stringify(chatForCloud.messages), updated_at: new Date(chat.updatedAt).toISOString() })
+      body: JSON.stringify({ id: chatId, title: chatForCloud.title, model: chatForCloud.model, messages: JSON.stringify(chatForCloud.messages), updated_at: new Date(chat.updatedAt || Date.now()).toISOString() })
     });
   } catch(e) {
     if (!quiet) toast('Cloud sync failed');
@@ -1999,7 +2032,7 @@ async function syncSettingsFromSupabase() {
 }
 
 function clearAllData() {
-  if (confirm('Delete all chats, memory, and settings?')) {
+  if (confirm('Delete all LOCAL chats, memory, and settings on this device? Cloud data will remain.')) {
     localStorage.removeItem('arbiter_v2');
     location.reload();
   }
