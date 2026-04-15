@@ -40,6 +40,7 @@
   <line x1="32" y1="16" x2="32" y2="48" stroke="%238fb8ff" stroke-width="2"/>
 </svg>'>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   /* ── DARK THEME (default) ── */
   :root {
@@ -693,9 +694,9 @@
         <input type="password" class="field-input" id="setup-password" placeholder="Choose a passphrase..." autocomplete="new-password" />
       </div>
       <div class="field-group">
-        <div class="field-label">OpenRouter API Key</div>
-        <input type="password" class="field-input" id="setup-or-key" placeholder="sk-or-..." />
-        <div class="field-hint">openrouter.ai/settings/keys</div>
+        <div class="field-label">Email</div>
+        <input type="email" class="field-input" id="setup-email" placeholder="you@example.com" autocomplete="email" />
+        <div class="field-hint">Used for Supabase Auth across devices</div>
       </div>
       <div class="field-group">
         <div class="field-label">Supabase URL</div>
@@ -714,7 +715,7 @@
   </div>
   <div id="setup-quick" style="display:none">
     <div class="setup-title">Connect device</div>
-    <div class="setup-sub">Enter your Supabase credentials and everything else will be pulled automatically.</div>
+    <div class="setup-sub">Enter your Supabase credentials, email, and passphrase to sign in on this device.</div>
     <div class="setup-form">
       <div class="field-group">
         <div class="field-label">Supabase URL</div>
@@ -723,6 +724,14 @@
       <div class="field-group">
         <div class="field-label">Supabase Publishable Key</div>
         <input type="password" class="field-input" id="quick-sb-key" placeholder="sb_publishable_..." />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Email</div>
+        <input type="email" class="field-input" id="quick-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="field-group">
+        <div class="field-label">Passphrase</div>
+        <input type="password" class="field-input" id="quick-password" placeholder="Your passphrase" autocomplete="current-password" />
       </div>
       <button class="primary-btn" onclick="quickConnect()">Connect</button>
       <div style="text-align:center;margin-top:4px">
@@ -962,11 +971,8 @@
       </div>
       <hr class="divider">
       <div>
-        <div class="p-label">OpenRouter API Key</div>
-        <div style="display:flex;gap:8px">
-          <input type="password" class="p-input" id="or-key-input" placeholder="sk-or-..." style="flex:1" />
-          <button class="btn btn-ghost" onclick="saveApiKey()">Save</button>
-        </div>
+        <div class="p-label">Model gateway</div>
+        <div class="p-desc">OpenRouter is now expected to live in your Supabase Edge Function secret. Nothing to store here in the browser.</div>
       </div>
       <hr class="divider">
       <div>
@@ -994,8 +1000,8 @@
       </div>
       <hr class="divider">
       <div>
-        <div class="p-label">Supabase sync <span style="color:var(--text-dimmer);font-weight:400">(optional)</span></div>
-        <div class="p-desc">Enables chat history sync across devices.</div>
+        <div class="p-label">Supabase connection</div>
+        <div class="p-desc">Used for login, chat sync, and calling your Edge Function.</div>
         <div style="display:flex;flex-direction:column;gap:8px">
           <input type="text" class="p-input" id="sb-url-input" placeholder="https://xxxx.supabase.co" />
           <div style="display:flex;gap:8px">
@@ -1036,6 +1042,9 @@ const DEFAULT_MODELS = [
 ];
 
 let editingMemoryId = null;
+let supabase = null;
+let currentUser = null;
+let visibilitySyncBound = false;
 
 let state = {
   activeModel: 'openai/gpt-4o-2024-11-20',
@@ -1044,8 +1053,8 @@ let state = {
   memoryCards: [],   // [{id, name, priority, keywords:[], content, pinned}]
   instructions: { about: '', style: '' },
   settings: {
-    orKey: '', sbUrl: '', sbKey: '', autoMemory: false,
-    appName: 'Arbiter', password: '',
+    sbUrl: '', sbKey: '', email: '', autoMemory: false,
+    appName: 'Arbiter',
     customModels: [],  // [{id, label}]
     webSearch: false
   },
@@ -1163,13 +1172,9 @@ function init() {
   applyAppName();
   buildModelSelect();
 
-  if (localStorage.getItem('arbiter_unlocked') === '1') {
+  if (localStorage.getItem('arbiter_unlocked') === '1' && state.settings.sbUrl && state.settings.sbKey && state.settings.email) {
     document.getElementById('lock-screen').style.display = 'none';
-    if (!state.settings.orKey || !state.settings.password) {
-      document.getElementById('setup-screen').classList.add('visible');
-    } else {
-      launchApp();
-    }
+    tryAutoLaunch();
   }
 }
 
@@ -1352,7 +1357,7 @@ function saveMemoryCard() {
   save();
   renderMemoryCards();
   closePanel('memory-editor-panel');
-  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  if (currentUser) syncSettingsToSupabase();
   toast(editingMemoryId ? 'Card updated' : 'Card added');
 }
 
@@ -1360,7 +1365,7 @@ function deleteMemoryCard(id) {
   state.memoryCards = state.memoryCards.filter(c => c.id !== id);
   save();
   renderMemoryCards();
-  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  if (currentUser) syncSettingsToSupabase();
 }
 
 function clearAllMemory() {
@@ -1368,7 +1373,7 @@ function clearAllMemory() {
     state.memoryCards = [];
     save();
     renderMemoryCards();
-    if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+    if (currentUser) syncSettingsToSupabase();
   }
 }
 
@@ -1391,27 +1396,78 @@ function save() {
 }
 
 // ── AUTH ──
-function tryUnlock() {
+function initSupabaseClient() {
+  if (!state.settings.sbUrl || !state.settings.sbKey || !window.supabase) return null;
+  if (!supabase || supabase.__arbiterUrl !== state.settings.sbUrl || supabase.__arbiterKey !== state.settings.sbKey) {
+    supabase = window.supabase.createClient(state.settings.sbUrl, state.settings.sbKey);
+    supabase.__arbiterUrl = state.settings.sbUrl;
+    supabase.__arbiterKey = state.settings.sbKey;
+  }
+  return supabase;
+}
+
+async function refreshCurrentUser() {
+  const client = initSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.auth.getUser();
+  currentUser = error ? null : (data.user || null);
+  return currentUser;
+}
+
+async function signInWithPassphrase(email, password, allowSignUp = false) {
+  const client = initSupabaseClient();
+  if (!client) throw new Error('Supabase URL and publishable key are required');
+  let { data, error } = await client.auth.signInWithPassword({ email, password });
+  if (error && allowSignUp) {
+    const signup = await client.auth.signUp({ email, password });
+    if (signup.error) throw signup.error;
+    data = signup.data;
+    error = null;
+  }
+  if (error) throw error;
+  currentUser = data?.user || null;
+  if (!currentUser) currentUser = await refreshCurrentUser();
+  return currentUser;
+}
+
+async function tryAutoLaunch() {
+  try {
+    const user = await refreshCurrentUser();
+    if (user) {
+      launchApp();
+    } else {
+      document.getElementById('lock-screen').style.display = 'flex';
+    }
+  } catch(e) {
+    document.getElementById('lock-screen').style.display = 'flex';
+  }
+}
+
+async function tryUnlock() {
   const inp = document.getElementById('lock-input');
   const err = document.getElementById('lock-error');
-  if (!state.settings.password) {
+  if (!state.settings.sbUrl || !state.settings.sbKey || !state.settings.email) {
     document.getElementById('lock-screen').style.display = 'none';
     document.getElementById('setup-screen').classList.add('visible');
     showQuickConnect();
     return;
   }
-  if (inp.value === state.settings.password) {
+  const password = inp.value.trim();
+  if (!password) {
+    err.textContent = 'Enter your passphrase';
+    return;
+  }
+  err.textContent = '';
+  try {
+    await signInWithPassphrase(state.settings.email, password, false);
     localStorage.setItem('arbiter_unlocked', '1');
     document.getElementById('lock-screen').style.display = 'none';
-    if (!state.settings.orKey) {
-      document.getElementById('setup-screen').classList.add('visible');
-    } else {
-      launchApp();
-    }
-  } else {
-    err.textContent = 'Incorrect passphrase';
+    inp.value = '';
+    launchApp();
+  } catch(e) {
+    err.textContent = 'Incorrect passphrase or session unavailable';
     inp.classList.add('error'); inp.value = '';
-    setTimeout(() => { inp.classList.remove('error'); err.textContent = ''; }, 2000);
+    setTimeout(() => { inp.classList.remove('error'); err.textContent = ''; }, 2200);
   }
 }
 
@@ -1425,69 +1481,58 @@ function showFullSetup() {
   document.getElementById('setup-full').style.display = 'block';
 }
 
-function saveSetup() {
-  const key = document.getElementById('setup-or-key').value.trim();
+async function saveSetup() {
   const password = document.getElementById('setup-password').value.trim();
+  const email = document.getElementById('setup-email').value.trim().toLowerCase();
   const appName = document.getElementById('setup-app-name').value.trim() || 'Arbiter';
   const sbUrl = document.getElementById('setup-sb-url').value.trim();
   const sbKey = document.getElementById('setup-sb-key').value.trim();
-  if (!key) { toast('OpenRouter API key required'); return; }
+  if (!email) { toast('Email required'); return; }
   if (!password) { toast('Please set a passphrase'); return; }
-  state.settings = { ...state.settings, orKey: key, password, appName, sbUrl, sbKey };
-  localStorage.setItem('arbiter_unlocked', '1');
+  if (!sbUrl || !sbKey) { toast('Supabase URL and publishable key required'); return; }
+
+  state.settings = { ...state.settings, email, appName, sbUrl, sbKey };
   save();
-  document.getElementById('setup-screen').classList.remove('visible');
   applyAppName();
-  if (sbUrl && sbKey) pushSettingsToSupabase();
-  launchApp();
+  try {
+    await signInWithPassphrase(email, password, true);
+    localStorage.setItem('arbiter_unlocked', '1');
+    document.getElementById('setup-screen').classList.remove('visible');
+    await syncSettingsFromSupabase();
+    launchApp();
+    toast('Setup complete');
+  } catch(e) {
+    toast('Auth failed: ' + (e.message || 'Unable to sign in'));
+  }
 }
 
 async function quickConnect() {
   const sbUrl = document.getElementById('quick-sb-url').value.trim();
   const sbKey = document.getElementById('quick-sb-key').value.trim();
-  if (!sbUrl || !sbKey) { toast('Both Supabase fields required'); return; }
+  const email = document.getElementById('quick-email').value.trim().toLowerCase();
+  const password = document.getElementById('quick-password').value.trim();
+  if (!sbUrl || !sbKey || !email || !password) { toast('All fields are required'); return; }
   toast('Connecting...');
   try {
-    const res = await fetch(`${sbUrl}/rest/v1/settings?select=key,value`, {
-      headers: { 'apikey': sbKey, 'Authorization': `Bearer ${sbKey}` }
-    });
-    if (!res.ok) throw new Error('Could not reach Supabase');
-    const rows = await res.json();
-    if (!rows.length) { toast('No existing setup found in Supabase'); return; }
-    const map = {};
-    rows.forEach(r => { try { map[r.key] = JSON.parse(r.value); } catch(e) { map[r.key] = r.value; } });
-    state.settings = { ...state.settings, ...map, sbUrl, sbKey };
-    localStorage.setItem('arbiter_unlocked', '1');
+    state.settings = { ...state.settings, sbUrl, sbKey, email };
     save();
+    await signInWithPassphrase(email, password, false);
+    localStorage.setItem('arbiter_unlocked', '1');
     document.getElementById('setup-screen').classList.remove('visible');
     applyAppName();
+    await syncSettingsFromSupabase();
     launchApp();
-    toast('Connected! Settings loaded.');
+    toast('Connected');
   } catch(e) {
     toast('Error: ' + (e.message || 'Connection failed'));
   }
 }
 
-async function pushSettingsToSupabase() {
-  if (!state.settings.sbUrl || !state.settings.sbKey) return;
-  const toSync = ['appName', 'password', 'orKey', 'autoMemory', 'webSearch'];
-  try {
-    for (const key of toSync) {
-      await fetch(`${state.settings.sbUrl}/rest/v1/settings`, {
-        method: 'POST',
-        headers: {
-          'apikey': state.settings.sbKey,
-          'Authorization': `Bearer ${state.settings.sbKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({ key, value: JSON.stringify(state.settings[key]), updated_at: new Date().toISOString() })
-      });
-    }
-  } catch(e) {}
+function pushSettingsToSupabase() {
+  return syncSettingsToSupabase();
 }
 
-function launchApp() {
+async function launchApp() {
   document.getElementById('app').classList.add('visible');
   buildModelSelect();
   renderChatList();
@@ -1498,26 +1543,33 @@ function launchApp() {
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
   initScrollWatcher();
 
-  // re-sync when app comes back into focus
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.settings.sbUrl && state.settings.sbKey) {
-      syncFromSupabase();
-    }
-  });
-  if (state.settings.sbUrl && state.settings.sbKey) {
-    syncFromSupabase();
-    syncSettingsFromSupabase();
+  if (!visibilitySyncBound) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && currentUser) {
+        syncFromSupabase();
+        syncSettingsFromSupabase();
+      }
+    });
+    visibilitySyncBound = true;
+  }
+
+  if (!currentUser) await refreshCurrentUser();
+  if (currentUser) {
+    await syncFromSupabase();
+    await syncSettingsFromSupabase();
   }
 }
 
 async function syncFromSupabase() {
   try {
-    const res = await fetch(`${state.settings.sbUrl}/rest/v1/chats?select=*&order=updated_at.desc&limit=100`, {
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
-    });
-    if (!res.ok) return;
-    const rows = await res.json();
-    if (!Array.isArray(rows) || !rows.length) return;
+    const client = initSupabaseClient();
+    if (!client || !currentUser) return;
+    const { data: rows, error } = await client
+      .from('chats')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(100);
+    if (error || !Array.isArray(rows) || !rows.length) return;
     let newCount = 0;
     let changed = false;
     rows.forEach(row => {
@@ -1525,17 +1577,15 @@ async function syncFromSupabase() {
       const remoteUpdated = new Date(row.updated_at).getTime();
       const localUpdated = local ? (local.updatedAt || local.createdAt || 0) : 0;
       if (!local || remoteUpdated > localUpdated) {
-        try {
-          state.chats[row.id] = {
-            title: row.title,
-            model: row.model,
-            messages: typeof row.messages === 'string' ? JSON.parse(row.messages) : row.messages,
-            createdAt: local?.createdAt || remoteUpdated,
-            updatedAt: remoteUpdated
-          };
-          changed = true;
-          if (!local) newCount++;
-        } catch(e) {}
+        state.chats[row.id] = {
+          title: row.title,
+          model: row.model,
+          messages: Array.isArray(row.messages) ? row.messages : (typeof row.messages === 'string' ? JSON.parse(row.messages) : []),
+          createdAt: local?.createdAt || remoteUpdated,
+          updatedAt: remoteUpdated
+        };
+        changed = true;
+        if (!local) newCount++;
       }
     });
     if (changed) {
@@ -1544,7 +1594,7 @@ async function syncFromSupabase() {
       if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
       if (newCount > 0) toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`);
     }
-  } catch(e) {}
+  } catch(e) { console.error(e); }
 }
 
 // ── SIDEBAR ──
@@ -1698,18 +1748,16 @@ function regenerate(idx) {
   sendMessage();
 }
 
-function deleteChat(e, id) {
+async function deleteChat(e, id) {
   e.stopPropagation();
   if (!confirm('Delete this chat?')) return;
   delete state.chats[id];
   if (state.currentChatId === id) state.currentChatId = null;
   save(); renderChatList(); renderMessages();
-  if (state.settings.sbUrl && state.settings.sbKey) {
-    fetch(`${state.settings.sbUrl}/rest/v1/chats?id=eq.${id}`, {
-      method: 'DELETE',
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
-    }).catch(()=>{});
-  }
+  try {
+    const client = initSupabaseClient();
+    if (client && currentUser) await client.from('chats').delete().eq('id', id);
+  } catch(e) {}
 }
 
 function submitEdit(idx) {
@@ -1824,7 +1872,7 @@ async function sendMessage() {
   const text = inp.value.trim();
   if (!text && !pendingAttachments.length) return;
   if (state.isStreaming) { state.isStreaming = false; document.getElementById('send-btn').disabled = false; hideTyping(); }
-  if (!state.settings.orKey) { toast('Add your OpenRouter API key in Settings'); openPanel('settings-panel'); return; }
+  if (!currentUser) { toast('Sign in again to continue'); return; }
   if (!state.currentChatId) newChat();
   const chat = state.chats[state.currentChatId];
   const displayText = text + getAttachmentSummary();
@@ -1848,7 +1896,7 @@ async function sendMessage() {
     save(); renderMessages(); renderChatList();
     scrollToMessage(newMsgIdx);
     if (state.settings.autoMemory) extractMemory(text, reply);
-    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
+    if (currentUser) syncSupabase(state.currentChatId);
   } catch(e) {
     hideTyping();
     const errMsg = e.message || 'Request failed';
@@ -1882,32 +1930,21 @@ function buildMsgs(chat, userMessage, useSearch = false) {
 }
 
 async function callOR(messages, useSearch = false) {
-  if (!messages || !messages.length) throw new Error('No messages provided');
+  const client = initSupabaseClient();
+  if (!client) throw new Error('Supabase is not configured');
+  const cacheKey = useSearch ? JSON.stringify([state.activeModel, messages]) : null;
+  if (useSearch && __searchCache.has(cacheKey)) return __searchCache.get(cacheKey);
   const payload = {
     model: state.activeModel,
     messages,
     temperature: 0.7,
-    max_tokens: 2048
+    max_tokens: 1400,
+    useSearch,
+    appName: state.settings.appName || 'Arbiter'
   };
-  const cacheKey = useSearch ? JSON.stringify([state.activeModel, messages]) : null;
-  if (useSearch && __searchCache.has(cacheKey)) return __searchCache.get(cacheKey);
-  if (useSearch) {
-    payload.tools = [{ type: 'openrouter:web_search' }];
-    payload.tool_choice = { type: 'openrouter:web_search' };
-  }
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${state.settings.orKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': window.location.href,
-      'X-Title': state.settings.appName || 'Arbiter'
-    },
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error?.message || `HTTP ${res.status}`); }
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '';
+  const { data, error } = await client.functions.invoke('openrouter-chat', { body: payload });
+  if (error) throw error;
+  const content = data?.choices?.[0]?.message?.content || data?.content || '';
   if (useSearch && cacheKey) __searchCache.set(cacheKey, content);
   return content;
 }
@@ -1926,33 +1963,30 @@ function hideTyping() { const e=document.getElementById('typing'); if(e) e.remov
 
 // ── AUTO-MEMORY (legacy flat extraction, creates a card) ──
 async function extractMemory(userMsg, assistantMsg) {
-  if (!state.settings.orKey) return;
   try {
-    const prompt = `Extract 0-3 important long-term facts about the user from this exchange. Only genuinely useful personal facts. If nothing worth storing, return [].\n\nUser: ${userMsg}\nAssistant: ${assistantMsg}\n\nRespond ONLY with a JSON array of strings. No other text.`;
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${state.settings.orKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.href, 'X-Title': 'Arbiter' },
-      body: JSON.stringify({ model: state.activeModel, messages: [{ role:'user', content: prompt }], temperature: 0, max_tokens: 200 })
-    });
-    const data = await res.json();
-    const facts = JSON.parse(data.choices[0].message.content.trim());
+    const prompt = `Extract 0-3 important long-term facts about the user from this exchange. Only genuinely useful personal facts. If nothing worth storing, return [].
+
+User: ${userMsg}
+Assistant: ${assistantMsg}
+
+Respond ONLY with a JSON array of strings. No other text.`;
+    const content = await callOR([{ role:'user', content: prompt }], false);
+    const facts = JSON.parse(String(content || '[]').trim());
     if (Array.isArray(facts) && facts.length) {
-      if (!state.memoryCards) state.memoryCards = [];
-      facts.forEach(f => {
-        if (typeof f === 'string' && f.trim()) {
-          state.memoryCards.push({
-            id: 'mc_auto_' + Date.now() + '_' + Math.random().toString(36).slice(2),
-            name: 'Auto: ' + f.trim().slice(0, 40),
-            priority: 'medium',
-            keywords: [],
-            content: f.trim(),
-            pinned: false
-          });
-        }
+      facts.slice(0,3).forEach((fact, i) => {
+        if (!fact || typeof fact !== 'string') return;
+        state.memoryCards.push({
+          id: 'mc_' + Date.now() + '_' + i,
+          name: 'Auto memory',
+          priority: 'medium',
+          keywords: [],
+          content: fact,
+          pinned: false
+        });
       });
-      save(); renderMemoryCards();
-      if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
-      toast(`${facts.length} memory fact${facts.length>1?'s':''} saved`);
+      save();
+      renderMemoryCards();
+      if (currentUser) syncSettingsToSupabase();
     }
   } catch(e) {}
 }
@@ -1967,13 +2001,12 @@ function saveInstructions() {
   state.instructions.about = document.getElementById('instructions-about').value.trim();
   state.instructions.style = document.getElementById('instructions-style').value.trim();
   save();
-  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
+  if (currentUser) syncSettingsToSupabase();
   closePanel('instructions-panel'); toast('Instructions saved');
 }
 
 // ── SETTINGS ──
 function loadSettingsPanel() {
-  document.getElementById('or-key-input').value = state.settings.orKey || '';
   document.getElementById('sb-url-input').value = state.settings.sbUrl || '';
   document.getElementById('sb-key-input').value = state.settings.sbKey || '';
   document.getElementById('auto-memory-toggle').checked = !!state.settings.autoMemory;
@@ -1988,82 +2021,118 @@ function saveAppName() {
   const val = document.getElementById('app-name-input').value.trim();
   if (!val) return;
   state.settings.appName = val;
-  save(); applyAppName(); pushSettingsToSupabase(); toast('App name updated');
+  save(); applyAppName(); syncSettingsToSupabase(); toast('App name updated');
 }
 
-function savePassword() {
+async function savePassword() {
   const val = document.getElementById('new-password-input').value.trim();
-  if (!val) { toast('Passphrase cannot be empty'); return; }
-  state.settings.password = val;
-  save(); pushSettingsToSupabase(); toast('Passphrase updated');
-  document.getElementById('new-password-input').value = '';
+  if (!val) { toast('Enter a new passphrase'); return; }
+  try {
+    const client = initSupabaseClient();
+    if (!client) throw new Error('Supabase not configured');
+    const { error } = await client.auth.updateUser({ password: val });
+    if (error) throw error;
+    document.getElementById('new-password-input').value = '';
+    toast('Passphrase updated');
+  } catch(e) {
+    toast('Could not update passphrase');
+  }
 }
 
-function saveApiKey() { state.settings.orKey = document.getElementById('or-key-input').value.trim(); save(); pushSettingsToSupabase(); toast('API key saved'); }
-function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); save(); updateSupabaseStatus(); pushSettingsToSupabase(); toast('Supabase saved'); }
+function saveApiKey() { toast('OpenRouter key now lives in your Edge Function secret'); }
+function saveSupabase() {
+  state.settings.sbUrl = document.getElementById('sb-url-input').value.trim();
+  state.settings.sbKey = document.getElementById('sb-key-input').value.trim();
+  save();
+  initSupabaseClient();
+  updateSupabaseStatus();
+  toast('Supabase saved');
+}
 function saveSettings() {
   state.settings.autoMemory = document.getElementById('auto-memory-toggle').checked;
   const webSearchToggle = document.getElementById('web-search-toggle');
   if (webSearchToggle) state.settings.webSearch = webSearchToggle.checked;
   save();
-  pushSettingsToSupabase();
+  syncSettingsToSupabase();
 }
 
 function updateSupabaseStatus() {
   const dot = document.getElementById('sb-status-dot');
   const txt = document.getElementById('sb-status-text');
-  if (state.settings.sbUrl && state.settings.sbKey) {
-    dot.className = 'status-dot ok'; txt.textContent = 'Configured';
+  if (state.settings.sbUrl && state.settings.sbKey && currentUser) {
+    dot.className = 'status-dot ok';
+    txt.textContent = `Signed in as ${state.settings.email || currentUser.email || 'user'}`;
+  } else if (state.settings.sbUrl && state.settings.sbKey) {
+    dot.className = 'status-dot';
+    txt.textContent = 'Configured, sign-in required';
   } else {
-    dot.className = 'status-dot'; txt.textContent = 'Not configured — history saved locally only';
+    dot.className = 'status-dot';
+    txt.textContent = 'Not configured';
   }
 }
 
 async function syncSupabase(chatId) {
-  const chat = state.chats[chatId]; if (!chat) return;
-  chat.updatedAt = Date.now();
   try {
-    await fetch(`${state.settings.sbUrl}/rest/v1/chats`, {
-      method: 'POST',
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: chatId, title: chat.title, model: chat.model, messages: JSON.stringify(chat.messages), updated_at: new Date().toISOString() })
+    const client = initSupabaseClient();
+    const chat = state.chats[chatId];
+    if (!client || !currentUser || !chat) return;
+    chat.updatedAt = Date.now();
+    await client.from('chats').upsert({
+      id: chatId,
+      user_id: currentUser.id,
+      title: chat.title,
+      model: chat.model,
+      messages: chat.messages,
+      updated_at: new Date().toISOString()
     });
-  } catch(e) {}
+  } catch(e) { console.error(e); }
 }
 
 async function syncSettingsToSupabase() {
   try {
-    await fetch(`${state.settings.sbUrl}/rest/v1/user_settings`, {
-      method: 'POST',
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: 'main', memory: JSON.stringify(state.memoryCards), instructions: JSON.stringify(state.instructions), updated_at: new Date().toISOString() })
+    const client = initSupabaseClient();
+    if (!client || !currentUser) return;
+    await client.from('user_settings').upsert({
+      id: 'main',
+      user_id: currentUser.id,
+      memory: state.memoryCards,
+      instructions: state.instructions,
+      app_name: state.settings.appName || 'Arbiter',
+      auto_memory: !!state.settings.autoMemory,
+      web_search: !!state.settings.webSearch,
+      updated_at: new Date().toISOString()
     });
-  } catch(e) {}
+  } catch(e) { console.error(e); }
 }
 
 async function syncSettingsFromSupabase() {
   try {
-    const res = await fetch(`${state.settings.sbUrl}/rest/v1/user_settings?id=eq.main&select=*`, {
-      headers: { 'apikey': state.settings.sbKey, 'Authorization': `Bearer ${state.settings.sbKey}` }
-    });
-    if (!res.ok) return;
-    const rows = await res.json();
-    if (!rows.length) return;
+    const client = initSupabaseClient();
+    if (!client || !currentUser) return;
+    const { data: rows, error } = await client
+      .from('user_settings')
+      .select('*')
+      .eq('id', 'main')
+      .limit(1);
+    if (error || !Array.isArray(rows) || !rows.length) return;
     const row = rows[0];
-    if (row.memory) state.memoryCards = JSON.parse(row.memory);
-    if (row.instructions) state.instructions = JSON.parse(row.instructions);
-    save(); renderMemoryCards(); loadInstructionsPanel();
-  } catch(e) {}
+    state.memoryCards = Array.isArray(row.memory) ? row.memory : [];
+    state.instructions = row.instructions || { about:'', style:'' };
+    if (row.app_name) state.settings.appName = row.app_name;
+    if (typeof row.auto_memory === 'boolean') state.settings.autoMemory = row.auto_memory;
+    if (typeof row.web_search === 'boolean') state.settings.webSearch = row.web_search;
+    save(); applyAppName(); renderMemoryCards(); loadInstructionsPanel(); loadSettingsPanel();
+  } catch(e) { console.error(e); }
 }
 
-function clearAllData() {
-  if (confirm('Delete all chats, memory, and settings?')) {
-    localStorage.removeItem('arbiter_v2');
-    location.reload();
-  }
+async function clearAllData() {
+  if (!confirm('Clear all local data? This does not delete cloud-synced chats.')) return;
+  try { if (supabase) await supabase.auth.signOut(); } catch(e) {}
+  localStorage.removeItem('arbiter_v2');
+  localStorage.removeItem('arbiter_unlocked');
+  location.reload();
 }
 
-// ── PANELS ──
 function openPanel(id) {
   if (id === 'memory-panel') {
     renderMemoryCards();
