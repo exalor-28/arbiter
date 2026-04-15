@@ -660,7 +660,7 @@
 <body>
 
 <!-- LOCK -->
-<div id="lock-screen" aria-hidden="true"></div>
+<div id="lock-screen" aria-hidden="true" style="display:none"></div>
 
 <!-- SETUP -->
 <div id="setup-screen">
@@ -1411,9 +1411,11 @@ async function signInWithPassphrase(email, password, allowSignUp = false) {
 async function bootstrapAuthFlow() {
   const setup = document.getElementById('setup-screen');
   const app = document.getElementById('app');
+  const lock = document.getElementById('lock-screen');
 
   app.classList.remove('visible');
   setup.classList.remove('visible');
+  if (lock) lock.style.display = 'none';
 
   if (!state.settings.sbUrl || !state.settings.sbKey || !state.settings.email) {
     showFullSetup();
