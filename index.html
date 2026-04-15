@@ -40,7 +40,6 @@
   <line x1="32" y1="16" x2="32" y2="48" stroke="%238fb8ff" stroke-width="2"/>
 </svg>'>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   /* ── DARK THEME (default) ── */
   :root {
@@ -178,12 +177,6 @@
   }
   .primary-btn:hover { opacity: 0.88; }
   .lock-error { font-size: 12px; color: var(--danger); text-align: center; min-height: 16px; }
-
-
-  #lock-screen { display: none !important; }
-  .legacy-secret-row { display: none !important; }
-  .auth-only { display: none; }
-
 
   /* ── SETUP ── */
   #setup-screen {
@@ -696,13 +689,13 @@
         <input type="text" class="field-input" id="setup-app-name" placeholder="e.g. Arbiter, Nexus, Oracle..." maxlength="24" />
       </div>
       <div class="field-group">
-        <div class="field-label">Email</div>
-        <input type="email" class="field-input" id="setup-email" placeholder="you@example.com" autocomplete="username" />
+        <div class="field-label">Set a Passphrase</div>
+        <input type="password" class="field-input" id="setup-password" placeholder="Choose a passphrase..." autocomplete="new-password" />
       </div>
       <div class="field-group">
-        <div class="field-label">Password</div>
-        <input type="password" class="field-input" id="setup-password" placeholder="Choose a password..." autocomplete="new-password" />
-        <div class="field-hint">Use the same email + password on other devices.</div>
+        <div class="field-label">OpenRouter API Key</div>
+        <input type="password" class="field-input" id="setup-or-key" placeholder="sk-or-..." />
+        <div class="field-hint">openrouter.ai/settings/keys</div>
       </div>
       <div class="field-group">
         <div class="field-label">Supabase URL</div>
@@ -711,7 +704,7 @@
       <div class="field-group">
         <div class="field-label">Supabase Publishable Key</div>
         <input type="password" class="field-input" id="setup-sb-key" placeholder="sb_publishable_..." />
-        <div class="field-hint">Required for cross-device sync and auth.</div>
+        <div class="field-hint">Required for cross-device sync</div>
       </div>
       <button class="primary-btn" onclick="saveSetup()">Save & Start</button>
       <div style="text-align:center;margin-top:4px">
@@ -730,14 +723,6 @@
       <div class="field-group">
         <div class="field-label">Supabase Publishable Key</div>
         <input type="password" class="field-input" id="quick-sb-key" placeholder="sb_publishable_..." />
-      </div>
-      <div class="field-group">
-        <div class="field-label">Email</div>
-        <input type="email" class="field-input" id="quick-email" placeholder="you@example.com" autocomplete="username" />
-      </div>
-      <div class="field-group">
-        <div class="field-label">Password</div>
-        <input type="password" class="field-input" id="quick-password" placeholder="Your password" autocomplete="current-password" />
       </div>
       <button class="primary-btn" onclick="quickConnect()">Connect</button>
       <div style="text-align:center;margin-top:4px">
@@ -969,14 +954,14 @@
         </div>
       </div>
       <div>
-        <div class="p-label">Change Password</div>
+        <div class="p-label">Change Passphrase</div>
         <div style="display:flex;gap:8px">
-          <input type="password" class="p-input" id="new-password-input" placeholder="New password..." style="flex:1" />
+          <input type="password" class="p-input" id="new-password-input" placeholder="New passphrase..." style="flex:1" />
           <button class="btn btn-ghost" onclick="savePassword()">Save</button>
         </div>
       </div>
       <hr class="divider">
-      <div class="legacy-secret-row">
+      <div>
         <div class="p-label">OpenRouter API Key</div>
         <div style="display:flex;gap:8px">
           <input type="password" class="p-input" id="or-key-input" placeholder="sk-or-..." style="flex:1" />
@@ -1025,16 +1010,8 @@
       </div>
       <hr class="divider">
       <div>
-        <div class="p-label">Account</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="text" class="p-input" id="account-email-input" placeholder="Signed in email" style="flex:1" readonly />
-          <button class="btn btn-ghost" onclick="signOutUser()">Sign out</button>
-        </div>
-      </div>
-      <hr class="divider">
-      <div>
         <div class="p-label" style="margin-bottom:10px">Danger zone</div>
-        <button class="btn btn-danger" onclick="clearAllData()" style="width:100%">Clear all local data</button>
+        <button class="btn btn-ghost" onclick="signOutUser()" style="width:100%;margin-bottom:8px">Sign out</button><button class="btn btn-danger" onclick="clearAllData()" style="width:100%">Clear all local data</button>
       </div>
     </div>
     <div class="panel-footer">
@@ -1045,6 +1022,7 @@
 
 <div id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ── DEFAULT MODELS ──
 const DEFAULT_MODELS = [
@@ -1078,10 +1056,9 @@ let state = {
 
 
 const __searchCache = new Map();
-let supabase = null;
+let supabaseClient = null;
 let currentUser = null;
-let visibilitySyncBound = false;
-
+let appLaunched = false;
 
 // ── SYSTEM THEME ──
 function applyThemeMeta() {
@@ -1131,6 +1108,7 @@ function init() {
       const p = JSON.parse(s);
       state = { ...state, ...p };
       if (p.settings) state.settings = { ...state.settings, ...p.settings };
+      // migrate flat memory array → memory cards if needed
       if (p.memory && Array.isArray(p.memory) && (!p.memoryCards || !p.memoryCards.length)) {
         state.memoryCards = p.memory.map((m, i) => ({
           id: 'mc_' + Date.now() + '_' + i,
@@ -1144,9 +1122,7 @@ function init() {
     }
   } catch(e) {}
 
-  delete state.settings.password;
-  delete state.settings.orKey;
-
+  // migrate legacy model keys → full OpenRouter IDs
   const MODEL_MIGRATION = {
     'gpt4o': 'openai/gpt-4o-2024-11-20',
     'grok':  'x-ai/grok-3'
@@ -1157,9 +1133,7 @@ function init() {
     c.messages && c.messages.forEach(m => { if (MODEL_MIGRATION[m.model]) m.model = MODEL_MIGRATION[m.model]; });
   });
 
-  const lock = document.getElementById('lock-screen');
-  if (lock) lock.style.display = 'none';
-
+  document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => {
     el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); });
   });
@@ -1191,73 +1165,9 @@ function init() {
   }
 
   applyAppName();
+  configureAuthUI();
   buildModelSelect();
   bootstrapAuth();
-}
-
-function initSupabaseClient() {
-  if (!state.settings.sbUrl || !state.settings.sbKey || !window.supabase) return null;
-  if (!supabase) {
-    supabase = window.supabase.createClient(state.settings.sbUrl, state.settings.sbKey);
-  }
-  return supabase;
-}
-
-async function bootstrapAuth() {
-  const lock = document.getElementById('lock-screen');
-  const setup = document.getElementById('setup-screen');
-  const app = document.getElementById('app');
-  if (lock) lock.style.display = 'none';
-  app.classList.remove('visible');
-
-  if (!state.settings.sbUrl || !state.settings.sbKey) {
-    setup.classList.add('visible');
-    showFullSetup();
-    return;
-  }
-
-  const client = initSupabaseClient();
-  if (!client) {
-    setup.classList.add('visible');
-    showFullSetup();
-    return;
-  }
-
-  try {
-    const { data, error } = await client.auth.getSession();
-    if (error) throw error;
-    currentUser = data.session?.user || null;
-    if (currentUser) {
-      setup.classList.remove('visible');
-      launchApp();
-      return;
-    }
-  } catch (e) {}
-
-  setup.classList.add('visible');
-  showQuickConnect();
-}
-
-async function signInOrSignUp(email, password) {
-  const client = initSupabaseClient();
-  if (!client) throw new Error('Supabase is not configured');
-
-  let signIn = await client.auth.signInWithPassword({ email, password });
-  if (!signIn.error && signIn.data?.user) {
-    currentUser = signIn.data.user;
-    return currentUser;
-  }
-
-  const signUp = await client.auth.signUp({ email, password });
-  if (signUp.error) throw signUp.error;
-  if (signUp.data?.user) {
-    const retry = await client.auth.signInWithPassword({ email, password });
-    if (retry.error) throw retry.error;
-    currentUser = retry.data.user || signUp.data.user;
-    return currentUser;
-  }
-
-  throw new Error('Could not sign in');
 }
 
 // ── MODEL SELECT ──
@@ -1477,14 +1387,97 @@ function save() {
   try { localStorage.setItem('arbiter_v2', JSON.stringify(state)); } catch(e) {}
 }
 
-// ── AUTH ──
-function tryUnlock() {
-  const setup = document.getElementById('setup-screen');
-  if (setup) {
-    setup.classList.add('visible');
-    showQuickConnect();
+// ── AUTH / CLOUD ──
+function configureAuthUI() {
+  const lock = document.getElementById('lock-screen');
+  if (lock) lock.style.display = 'none';
+
+  const setupSub = document.querySelector('#setup-full .setup-sub');
+  if (setupSub) setupSub.textContent = 'Sign in with your Supabase account. Your chats and settings will sync across devices.';
+
+  const passLabel = document.querySelector('#setup-password')?.closest('.field-group')?.querySelector('.field-label');
+  if (passLabel) passLabel.textContent = 'Password';
+  const passInput = document.getElementById('setup-password');
+  if (passInput) passInput.placeholder = 'Choose or enter your password...';
+
+  const emailLabel = document.querySelector('#setup-or-key')?.closest('.field-group')?.querySelector('.field-label');
+  if (emailLabel) emailLabel.textContent = 'Email';
+  const emailInput = document.getElementById('setup-or-key');
+  if (emailInput) {
+    emailInput.type = 'email';
+    emailInput.placeholder = 'you@example.com';
+  }
+  const emailHint = emailInput?.closest('.field-group')?.querySelector('.field-hint');
+  if (emailHint) emailHint.textContent = 'Used for Supabase Auth';
+
+  const quickWrap = document.querySelector('#setup-quick .setup-form');
+  if (quickWrap && !document.getElementById('quick-email')) {
+    const emailGroup = document.createElement('div');
+    emailGroup.className = 'field-group';
+    emailGroup.innerHTML = '<div class="field-label">Email</div><input type="email" class="field-input" id="quick-email" placeholder="you@example.com" />';
+    const passwordGroup = document.createElement('div');
+    passwordGroup.className = 'field-group';
+    passwordGroup.innerHTML = '<div class="field-label">Password</div><input type="password" class="field-input" id="quick-password" placeholder="Your password" autocomplete="current-password" />';
+    quickWrap.insertBefore(emailGroup, quickWrap.querySelector('button.primary-btn'));
+    quickWrap.insertBefore(passwordGroup, quickWrap.querySelector('button.primary-btn'));
+  }
+
+  const setupQuickSub = document.querySelector('#setup-quick .setup-sub');
+  if (setupQuickSub) setupQuickSub.textContent = 'Enter your Supabase credentials plus your account email and password.';
+
+  const settingsRows = document.querySelectorAll('#settings-panel .panel-body > div');
+  if (settingsRows[1]) {
+    settingsRows[1].querySelector('.p-label').textContent = 'Change Account Password';
+    const input = settingsRows[1].querySelector('input');
+    if (input) input.placeholder = 'New account password...';
+  }
+  if (settingsRows[2]) settingsRows[2].style.display = 'none';
+}
+
+function initSupabaseClient() {
+  if (!state.settings.sbUrl || !state.settings.sbKey || !window.supabase) return null;
+  supabaseClient = window.supabase.createClient(state.settings.sbUrl, state.settings.sbKey);
+  return supabaseClient;
+}
+
+async function bootstrapAuth() {
+  document.getElementById('lock-screen').style.display = 'none';
+  document.getElementById('app').classList.remove('visible');
+  if (!state.settings.sbUrl || !state.settings.sbKey) {
+    showSetupScreen(true);
+    return;
+  }
+  try {
+    initSupabaseClient();
+    if (!supabaseClient) throw new Error('Supabase client not initialized');
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    currentUser = data?.session?.user || null;
+    if (!currentUser) {
+      showSetupScreen(true);
+      return;
+    }
+    document.getElementById('setup-screen').classList.remove('visible');
+    launchApp();
+  } catch (e) {
+    console.error(e);
+    showSetupScreen(true);
   }
 }
+
+function showSetupScreen(full = true) {
+  document.getElementById('lock-screen').style.display = 'none';
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('setup-screen').classList.add('visible');
+  if (full) showFullSetup(); else showQuickConnect();
+  if (state.settings.sbUrl) document.getElementById('setup-sb-url').value = state.settings.sbUrl;
+  if (state.settings.sbKey) document.getElementById('setup-sb-key').value = state.settings.sbKey;
+  if (state.settings.email) document.getElementById('setup-or-key').value = state.settings.email;
+  const qe = document.getElementById('quick-email');
+  if (qe && state.settings.email) qe.value = state.settings.email;
+}
+
+function tryUnlock() { showSetupScreen(true); }
 
 function showQuickConnect() {
   document.getElementById('setup-full').style.display = 'none';
@@ -1496,72 +1489,81 @@ function showFullSetup() {
   document.getElementById('setup-full').style.display = 'block';
 }
 
+async function signInOrSignUp(email, password) {
+  initSupabaseClient();
+  if (!supabaseClient) throw new Error('Missing Supabase config');
+
+  let result = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (result.error) {
+    const msg = result.error.message || '';
+    const likelyMissing = /invalid login credentials|email not confirmed|user not found|invalid email or password/i.test(msg);
+    if (likelyMissing) {
+      const signup = await supabaseClient.auth.signUp({ email, password });
+      if (signup.error) throw result.error;
+      result = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (result.error) throw result.error;
+    } else {
+      throw result.error;
+    }
+  }
+  const { data } = await supabaseClient.auth.getSession();
+  currentUser = data?.session?.user || result.data?.user || null;
+  if (!currentUser) throw new Error('No active session');
+}
+
 async function saveSetup() {
-  const email = document.getElementById('setup-email').value.trim().toLowerCase();
+  const email = document.getElementById('setup-or-key').value.trim();
   const password = document.getElementById('setup-password').value.trim();
   const appName = document.getElementById('setup-app-name').value.trim() || 'Arbiter';
   const sbUrl = document.getElementById('setup-sb-url').value.trim();
   const sbKey = document.getElementById('setup-sb-key').value.trim();
   if (!email) { toast('Email required'); return; }
-  if (!password) { toast('Please set a password'); return; }
+  if (!password) { toast('Password required'); return; }
   if (!sbUrl || !sbKey) { toast('Supabase URL and key required'); return; }
-
   state.settings = { ...state.settings, email, appName, sbUrl, sbKey };
-  supabase = null;
   save();
   applyAppName();
-  toast('Signing in...');
-
   try {
     await signInOrSignUp(email, password);
     document.getElementById('setup-screen').classList.remove('visible');
-    await syncSettingsToSupabase();
+    await syncSettingsFromSupabase();
     launchApp();
-    toast('Ready');
+    toast('Signed in');
   } catch (e) {
-    toast('Auth failed: ' + (e.message || 'Unknown error'));
+    console.error(e);
+    toast('Auth error: ' + (e.message || 'Unable to sign in'));
   }
 }
 
 async function quickConnect() {
   const sbUrl = document.getElementById('quick-sb-url').value.trim();
   const sbKey = document.getElementById('quick-sb-key').value.trim();
-  const email = document.getElementById('quick-email').value.trim().toLowerCase();
-  const password = document.getElementById('quick-password').value.trim();
+  const email = document.getElementById('quick-email')?.value.trim();
+  const password = document.getElementById('quick-password')?.value.trim();
   if (!sbUrl || !sbKey || !email || !password) { toast('All fields required'); return; }
-  toast('Connecting...');
+  state.settings = { ...state.settings, sbUrl, sbKey, email };
+  save();
   try {
-    state.settings = { ...state.settings, sbUrl, sbKey, email };
-    supabase = null;
-    save();
     await signInOrSignUp(email, password);
     document.getElementById('setup-screen').classList.remove('visible');
+    await syncSettingsFromSupabase();
     launchApp();
     toast('Connected');
-  } catch(e) {
-    toast('Error: ' + (e.message || 'Connection failed'));
+  } catch (e) {
+    console.error(e);
+    toast('Auth error: ' + (e.message || 'Unable to sign in'));
   }
 }
 
-async function pushSettingsToSupabase() {
-  return syncSettingsToSupabase();
-}
-
-async function signOutUser() {
-  const client = initSupabaseClient();
-  if (client) {
-    try { await client.auth.signOut(); } catch (e) {}
-  }
-  currentUser = null;
-  document.getElementById('app').classList.remove('visible');
-  document.getElementById('setup-screen').classList.add('visible');
-  showQuickConnect();
-  toast('Signed out');
-}
+async function pushSettingsToSupabase() { return syncSettingsToSupabase(); }
 
 function launchApp() {
-  document.getElementById('lock-screen').style.display = 'none';
+  if (!currentUser) {
+    showSetupScreen(true);
+    return;
+  }
   document.getElementById('setup-screen').classList.remove('visible');
+  document.getElementById('lock-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   buildModelSelect();
   renderChatList();
@@ -1570,33 +1572,24 @@ function launchApp() {
   loadSettingsPanel();
   updateSupabaseStatus();
   if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
-  initScrollWatcher();
-
-  if (!visibilitySyncBound) {
+  if (!appLaunched) {
+    initScrollWatcher();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && currentUser) {
         syncFromSupabase();
         syncSettingsFromSupabase();
       }
     });
-    visibilitySyncBound = true;
+    appLaunched = true;
   }
-
-  if (currentUser) {
-    syncFromSupabase();
-    syncSettingsFromSupabase();
-  }
+  syncFromSupabase();
+  syncSettingsFromSupabase();
 }
 
 async function syncFromSupabase() {
-  const client = initSupabaseClient();
-  if (!client || !currentUser) return;
+  if (!supabaseClient || !currentUser) return;
   try {
-    const { data: rows, error } = await client
-      .from('chats')
-      .select('*')
-      .order('updated_at', { ascending: false })
-      .limit(100);
+    const { data: rows, error } = await supabaseClient.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
     if (error || !Array.isArray(rows) || !rows.length) return;
     let newCount = 0;
     let changed = false;
@@ -1620,534 +1613,58 @@ async function syncFromSupabase() {
       save();
       renderChatList();
       if (state.currentChatId && state.chats[state.currentChatId]) renderMessages();
-      if (newCount > 0) toast(`Synced ${newCount} chat${newCount>1?'s':''} from cloud`);
+      if (newCount > 0) toast(`Synced ${newCount} chat${newCount > 1 ? 's' : ''} from cloud`);
     }
-  } catch(e) {
-    console.error(e);
-  }
-}
-
-// ── SIDEBAR ──
-function toggleSidebar() {
-  const isMobile = window.innerWidth <= 680;
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  if (isMobile) {
-    const open = sidebar.classList.toggle('mobile-open');
-    overlay.classList.toggle('visible', open);
-  } else {
-    state.sidebarOpen = !state.sidebarOpen;
-    sidebar.classList.toggle('collapsed', !state.sidebarOpen);
-  }
-}
-
-function closeSidebarMobile() {
-  document.getElementById('sidebar').classList.remove('mobile-open');
-  document.getElementById('sidebar-overlay').classList.remove('visible');
-}
-
-function newChat() {
-  const id = 'c' + Date.now();
-  state.chats[id] = { title: 'New Chat', model: state.activeModel, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
-  state.currentChatId = id;
-  save(); renderChatList(); renderMessages();
-}
-
-function loadChat(id) {
-  state.currentChatId = id;
-  const c = state.chats[id];
-  if (c) {
-    state.activeModel = c.model;
-    buildModelSelect();
-  }
-  save(); renderChatList(); renderMessages();
-  closeSidebarMobile();
-}
-
-function renderChatList() {
-  const el = document.getElementById('chat-list');
-  const entries = Object.entries(state.chats).sort((a,b) => (b[1].updatedAt||b[1].createdAt) - (a[1].updatedAt||a[1].createdAt));
-  if (!entries.length) {
-    el.innerHTML = '<div style="padding:12px 10px;font-size:12px;color:var(--text-dimmer)">No chats yet</div>';
-    return;
-  }
-  el.innerHTML = '<div class="chat-section-label">Recent</div>' +
-    entries.map(([id, c]) => {
-      const d = new Date(c.updatedAt || c.createdAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
-      return `<div class="chat-item ${id===state.currentChatId?'active':''}" onclick="loadChat('${id}')">
-        <div class="chat-item-title">${esc(c.title)}</div>
-        <div class="chat-item-meta" style="display:flex;align-items:center;justify-content:space-between">
-          <span>${d} · ${esc(getModelLabel(c.model))}</span>
-          <button class="chat-delete-btn" onclick="deleteChat(event,'${id}')" title="Delete">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-          </button>
-        </div>
-      </div>`;
-    }).join('');
-}
-
-// ── MESSAGES ──
-function renderMessages() {
-  const wrap = document.getElementById('messages-inner');
-  const chat = state.currentChatId ? state.chats[state.currentChatId] : null;
-  if (!chat || !chat.messages.length) {
-    wrap.innerHTML = `<div class="empty-state">
-      <div class="empty-icon">⚖️</div>
-      <div class="empty-title" id="empty-title">${esc(state.settings.appName||'Arbiter')}</div>
-      <div class="empty-subtitle" id="empty-subtitle">Select a model and start chatting.</div>
-    </div>`;
-    return;
-  }
-  wrap.innerHTML = chat.messages.filter(m => m.role !== 'system').map((m, i) => renderMsg(m, i, chat)).join('');
-  scrollBottom();
-}
-
-function renderMsg(msg, idx, chat) {
-  const isUser = msg.role === 'user';
-  const modelLabel = msg.model ? getModelLabel(msg.model) : 'AI';
-  const av = isUser ? 'YOU' : modelLabel.substring(0, 2).toUpperCase();
-  const time = msg.ts ? new Date(msg.ts).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }) : '';
-  const badge = !isUser && msg.model ? `<span class="model-badge">${esc(getModelLabel(msg.model))}</span>` : '';
-  const visibleMsgs = chat ? chat.messages.filter(m => m.role !== 'system') : [];
-  const lastUserIdx = visibleMsgs.map((m,i) => m.role==='user' ? i : -1).filter(i=>i>=0).slice(-1)[0];
-  const lastAssistantIdx = visibleMsgs.map((m,i) => m.role==='assistant' ? i : -1).filter(i=>i>=0).slice(-1)[0];
-  const isLast = idx === visibleMsgs.length - 1;
-  const canRegenerate = !isUser && !msg.isError && idx === lastAssistantIdx;
-  const actions = isUser
-    ? (idx === lastUserIdx ? `<button class="msg-action-btn" onclick="startEdit(${idx})">Edit</button>` : '')
-    : `<button class="msg-action-btn" onclick="copyMsg(${idx})">Copy</button>`
-      + (canRegenerate ? `<button class="msg-action-btn" onclick="regenerate(${idx})">Regenerate</button>` : '');
-  let extraContent = '';
-  if (isUser && Array.isArray(msg.rawContent)) {
-    msg.rawContent.forEach(part => {
-      if (part.type === 'image_url') {
-        extraContent += `<img src="${part.image_url.url}" class="msg-image" alt="uploaded image">`;
-      }
-    });
-  }
-  const showAlways = (isUser && idx === lastUserIdx) || (!isUser && idx === lastAssistantIdx);
-  return `<div class="message ${msg.role}${showAlways ? ' last-msg' : ''}" data-idx="${idx}">
-    <div class="msg-avatar">${av}</div>
-    <div class="msg-content">
-      <div class="msg-name">${isUser ? 'You' : esc(modelLabel)}</div>
-      <div class="msg-text" id="msg-text-${idx}">${fmt(msg.content)}${extraContent}${!isUser ? renderSourceChips(msg.content) : ''}</div>
-      <div class="msg-footer"><span class="msg-time">${time}</span>${badge}${actions}</div>
-    </div>
-  </div>`;
-}
-
-function startEdit(idx) {
-  const chat = state.chats[state.currentChatId];
-  const msg = chat.messages.filter(m=>m.role!=='system')[idx];
-  const textEl = document.getElementById(`msg-text-${idx}`);
-  if (!textEl) return;
-  textEl.innerHTML = `
-    <textarea class="msg-edit-box" id="edit-textarea-${idx}" rows="3">${esc(msg.content)}</textarea>
-    <div class="msg-edit-actions">
-      <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="submitEdit(${idx})">Save & Resend</button>
-      <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="cancelEdit(${idx})">Cancel</button>
-    </div>`;
-  const ta = document.getElementById(`edit-textarea-${idx}`);
-  ta.style.height = 'auto';
-  ta.style.height = ta.scrollHeight + 'px';
-  ta.focus();
-  ta.setSelectionRange(ta.value.length, ta.value.length);
-}
-
-function copyMsg(idx) {
-  const chat = state.chats[state.currentChatId];
-  const msg = chat.messages.filter(m=>m.role!=='system')[idx];
-  navigator.clipboard.writeText(msg.content).then(() => toast('Copied'));
-}
-
-function cancelEdit(idx) { renderMessages(); }
-
-function regenerate(idx) {
-  const chat = state.chats[state.currentChatId];
-  const visibleMsgs = chat.messages.filter(m=>m.role!=='system');
-  const msg = visibleMsgs[idx];
-  if (!msg || msg.role !== 'assistant') return;
-  const realIdx = chat.messages.indexOf(msg);
-  chat.messages = chat.messages.slice(0, realIdx);
-  save();
-  const lastUser = chat.messages.filter(m=>m.role==='user').slice(-1)[0];
-  if (!lastUser) return;
-  document.getElementById('chat-input').value = lastUser.content;
-  chat.messages = chat.messages.slice(0, chat.messages.indexOf(lastUser));
-  save();
-  sendMessage();
-}
-
-function deleteChat(e, id) {
-  e.stopPropagation();
-  if (!confirm('Delete this chat?')) return;
-  delete state.chats[id];
-  if (state.currentChatId === id) state.currentChatId = null;
-  save(); renderChatList(); renderMessages();
-  if (currentUser) {
-    const client = initSupabaseClient();
-    if (client) client.from('chats').delete().eq('id', id).catch(()=>{});
-  }
-}
-
-function submitEdit(idx) {
-  const ta = document.getElementById(`edit-textarea-${idx}`);
-  if (!ta) return;
-  const newText = ta.value.trim();
-  if (!newText) return;
-  const chat = state.chats[state.currentChatId];
-  const visibleMsgs = chat.messages.filter(m=>m.role!=='system');
-  const realIdx = chat.messages.indexOf(visibleMsgs[idx]);
-  chat.messages = chat.messages.slice(0, realIdx);
-  save();
-  document.getElementById('chat-input').value = newText;
-  sendMessage();
-}
-
-// ── UPLOADS ──
-let pendingAttachments = [];
-
-function handleFileSelect(e) {
-  const files = Array.from(e.target.files);
-  e.target.value = '';
-  files.forEach(file => {
-    const reader = new FileReader();
-    if (file.type.startsWith('image/')) {
-      reader.onload = ev => {
-        const base64 = ev.target.result.split(',')[1];
-        pendingAttachments.push({ type: 'image', name: file.name, data: base64, mediaType: file.type, dataUrl: ev.target.result });
-        renderUploadPreview();
-      };
-      reader.readAsDataURL(file);
-    } else {
-      reader.onload = ev => {
-        pendingAttachments.push({ type: 'text', name: file.name, data: ev.target.result });
-        renderUploadPreview();
-      };
-      reader.readAsText(file);
-    }
-  });
-}
-
-function renderUploadPreview() {
-  const el = document.getElementById('upload-preview');
-  if (!pendingAttachments.length) { el.innerHTML = ''; return; }
-  el.innerHTML = pendingAttachments.map((a, i) => `
-    <div class="upload-chip">
-      ${a.type === 'image' ? `<img src="${a.dataUrl}" alt="${esc(a.name)}">` : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'}
-      <span class="upload-chip-name">${esc(a.name)}</span>
-      <button class="upload-chip-remove" onclick="removeAttachment(${i})">×</button>
-    </div>`).join('');
-}
-
-function removeAttachment(i) { pendingAttachments.splice(i, 1); renderUploadPreview(); }
-
-function buildMessageContent(text) {
-  if (!pendingAttachments.length) return text;
-  const content = [];
-  if (text) content.push({ type: 'text', text });
-  pendingAttachments.forEach(a => {
-    if (a.type === 'image') {
-      content.push({ type: 'image_url', image_url: { url: `data:${a.mediaType};base64,${a.data}` } });
-    } else {
-      content.push({ type: 'text', text: `\n\n[File: ${a.name}]\n${a.data}` });
-    }
-  });
-  return content;
-}
-
-function getAttachmentSummary() {
-  if (!pendingAttachments.length) return '';
-  return ' [' + pendingAttachments.map(a => a.name).join(', ') + ']';
-}
-
-// ── MARKDOWN ──
-function fmt(t) {
-  if (!t) return '';
-  t = esc(t);
-  t = t.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-  t = t.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">$1</a>');
-  t = t.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>').replace(/(<li>[\s\S]+?<\/li>)/g, '<ul>$1</ul>');
-  return t.split(/\n{2,}/).map(b => b.trim() ? (b.startsWith('<pre')||b.startsWith('<ul') ? b : `<p>${b.replace(/\n/g,'<br>')}</p>`) : '').join('');
-}
-
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function scrollBottom() {
-  const w = document.getElementById('messages-wrap');
-  setTimeout(() => { w.scrollTop = w.scrollHeight; }, 30);
-}
-
-function scrollToMessage(idx) {
-  setTimeout(() => {
-    const el = document.querySelector(`[data-idx="${idx}"]`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 50);
-}
-
-function initScrollWatcher() {
-  const wrap = document.getElementById('messages-wrap');
-  const btn = document.getElementById('scroll-bottom-btn');
-  if (!wrap || !btn) return;
-  wrap.addEventListener('scroll', () => {
-    const distFromBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight;
-    btn.classList.toggle('visible', distFromBottom > 120);
-  });
-}
-
-// ── SEND ──
-async function sendMessage() {
-  const inp = document.getElementById('chat-input');
-  const text = inp.value.trim();
-  if (!text && !pendingAttachments.length) return;
-  if (state.isStreaming) { state.isStreaming = false; document.getElementById('send-btn').disabled = false; hideTyping(); }
-  if (!currentUser) { toast('Please sign in first'); document.getElementById('setup-screen').classList.add('visible'); showQuickConnect(); return; }
-  if (!state.currentChatId) newChat();
-  const chat = state.chats[state.currentChatId];
-  const displayText = text + getAttachmentSummary();
-  const messageContent = buildMessageContent(text);
-  chat.messages.push({ role:'user', content: displayText, rawContent: messageContent, ts: Date.now() });
-  chat.updatedAt = Date.now();
-  if (chat.title === 'New Chat') chat.title = (text || pendingAttachments[0]?.name || 'Upload').slice(0, 42);
-  inp.value = ''; autoResize(inp);
-  pendingAttachments = []; renderUploadPreview();
-  save(); renderMessages(); renderChatList();
-  const useSearchPreview = !!state.settings.webSearch && shouldUseSearch(text);
-  showTyping(useSearchPreview); state.isStreaming = true;
-  document.getElementById('send-btn').disabled = true;
-  try {
-    const useSearch = !!state.settings.webSearch && shouldUseSearch(text);
-    const msgs = buildMsgs(chat, text, useSearch);
-    const reply = await callOR(msgs, useSearch);
-    hideTyping();
-    chat.messages.push({ role:'assistant', content: reply, model: state.activeModel, ts: Date.now() });
-    const newMsgIdx = chat.messages.filter(m => m.role !== 'system').length - 1;
-    save(); renderMessages(); renderChatList();
-    scrollToMessage(newMsgIdx);
-    if (state.settings.autoMemory) extractMemory(text, reply);
-    if (state.settings.sbUrl && state.settings.sbKey) syncSupabase(state.currentChatId);
-  } catch(e) {
-    hideTyping();
-    const errMsg = e.message || 'Request failed';
-    toast('Error: ' + errMsg, 4000);
-    chat.messages.push({ role:'assistant', content:`⚠️ Error: ${errMsg}`, model: state.activeModel, ts: Date.now(), isError: true });
-    chat.updatedAt = Date.now();
-    save(); renderMessages(); renderChatList();
-  }
-  state.isStreaming = false;
-  document.getElementById('send-btn').disabled = false;
-}
-
-function buildMsgs(chat, userMessage, useSearch = false) {
-  const parts = [];
-  if (state.instructions.about) parts.push(state.instructions.about);
-  if (state.instructions.style) parts.push('Response style: ' + state.instructions.style);
-  if (useSearch) parts.push('You can access current information using web search. Use it for current, recent, or time-sensitive questions. Include source links when available.');
-
-  // inject relevant memory cards
-  const relevantCards = selectRelevantMemories(userMessage || '');
-  if (relevantCards.length) {
-    parts.push('Context from memory:\n' + relevantCards.map(c => `[${c.name}]\n${c.content}`).join('\n\n'));
-  }
-
-  const msgs = [];
-  if (parts.length) msgs.push({ role:'system', content: parts.join('\n\n') });
-  chat.messages.filter(m=>m.role!=='system').forEach(m =>
-    msgs.push({ role: m.role, content: m.rawContent || m.content })
-  );
-  return msgs;
-}
-
-async function callOR(messages, useSearch = false) {
-  if (!messages || !messages.length) throw new Error('No messages provided');
-  const client = initSupabaseClient();
-  if (!client || !currentUser) throw new Error('Please sign in first');
-  const payload = {
-    model: state.activeModel,
-    messages,
-    temperature: 0.7,
-    max_tokens: 2048,
-    title: state.settings.appName || 'Arbiter',
-    referer: window.location.origin
-  };
-  const cacheKey = useSearch ? JSON.stringify([state.activeModel, messages]) : null;
-  if (useSearch && __searchCache.has(cacheKey)) return __searchCache.get(cacheKey);
-  if (useSearch) {
-    payload.tools = [{ type: 'openrouter:web_search' }];
-    payload.tool_choice = { type: 'openrouter:web_search' };
-  }
-  const { data, error } = await client.functions.invoke('openrouter-chat', { body: payload });
-  if (error) throw new Error(error.message || 'Model call failed');
-  const content = data?.choices?.[0]?.message?.content || data?.content || '';
-  if (useSearch && cacheKey) __searchCache.set(cacheKey, content);
-  return content;
-}
-
-function showTyping(isSearch = false) {
-  const wrap = document.getElementById('messages-inner');
-  const el = document.createElement('div');
-  el.id = 'typing'; el.className = 'typing-indicator';
-  el.innerHTML = isSearch
-    ? `<div class="msg-avatar" style="background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-size:11px">${getModelLabel(state.activeModel).substring(0,2).toUpperCase()}</div><div style="padding-top:6px;font-size:13px;color:var(--text-dim)">🔍 Searching the web…</div>`
-    : `<div class="msg-avatar" style="background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);font-size:11px">${getModelLabel(state.activeModel).substring(0,2).toUpperCase()}</div><div class="typing-dots"><span></span><span></span><span></span></div>`;
-  wrap.appendChild(el); scrollBottom();
-}
-
-function hideTyping() { const e=document.getElementById('typing'); if(e) e.remove(); }
-
-// ── AUTO-MEMORY (legacy flat extraction, creates a card) ──
-async function extractMemory(userMsg, assistantMsg) {
-  if (!currentUser) return;
-  try {
-    const prompt = `Extract 0-3 important long-term facts about the user from this exchange. Only genuinely useful personal facts. If nothing worth storing, return [].
-
-User: ${userMsg}
-Assistant: ${assistantMsg}
-
-Respond ONLY with a JSON array of strings. No other text.`;
-    const data = await callOR([{ role:'user', content: prompt }], false).catch(() => null);
-    if (!data) return;
-    const facts = JSON.parse(data.trim());
-    if (Array.isArray(facts) && facts.length) {
-      if (!state.memoryCards) state.memoryCards = [];
-      facts.forEach(f => {
-        if (typeof f === 'string' && f.trim()) {
-          state.memoryCards.push({
-            id: 'mc_auto_' + Date.now() + '_' + Math.random().toString(36).slice(2),
-            name: 'Auto: ' + f.trim().slice(0, 40),
-            priority: 'medium',
-            keywords: [],
-            content: f.trim(),
-            pinned: false
-          });
-        }
-      });
-      save(); renderMemoryCards();
-      if (currentUser) syncSettingsToSupabase();
-      toast(`${facts.length} memory fact${facts.length>1?'s':''} saved`);
-    }
-  } catch(e) {}
-}
-
-// ── INSTRUCTIONS ──
-function loadInstructionsPanel() {
-  document.getElementById('instructions-about').value = state.instructions.about || '';
-  document.getElementById('instructions-style').value = state.instructions.style || '';
-}
-
-function saveInstructions() {
-  state.instructions.about = document.getElementById('instructions-about').value.trim();
-  state.instructions.style = document.getElementById('instructions-style').value.trim();
-  save();
-  if (state.settings.sbUrl && state.settings.sbKey) syncSettingsToSupabase();
-  closePanel('instructions-panel'); toast('Instructions saved');
-}
-
-// ── SETTINGS ──
-function loadSettingsPanel() {
-    document.getElementById('sb-url-input').value = state.settings.sbUrl || '';
-  document.getElementById('sb-key-input').value = state.settings.sbKey || '';
-  document.getElementById('auto-memory-toggle').checked = !!state.settings.autoMemory;
-  const webSearchToggle = document.getElementById('web-search-toggle');
-  if (webSearchToggle) webSearchToggle.checked = !!state.settings.webSearch;
-  document.getElementById('app-name-input').value = state.settings.appName || 'Arbiter';
-  document.getElementById('new-password-input').value = '';
-  const acct = document.getElementById('account-email-input'); if (acct) acct.value = currentUser?.email || state.settings.email || '';
-  loadCustomModelsList();
-}
-
-function saveAppName() {
-  const val = document.getElementById('app-name-input').value.trim();
-  if (!val) return;
-  state.settings.appName = val;
-  save(); applyAppName(); syncSettingsToSupabase(); toast('App name updated');
-}
-
-async function savePassword() {
-  const val = document.getElementById('new-password-input').value.trim();
-  if (!val) { toast('Password cannot be empty'); return; }
-  const client = initSupabaseClient();
-  if (!client || !currentUser) { toast('Please sign in again'); return; }
-  const { error } = await client.auth.updateUser({ password: val });
-  if (error) { toast(error.message || 'Could not update password'); return; }
-  toast('Password updated');
-  document.getElementById('new-password-input').value = '';
-}
-
-function saveApiKey() { toast('OpenRouter key is managed in your Supabase Edge Function secret.'); }
-function saveSupabase() { state.settings.sbUrl = document.getElementById('sb-url-input').value.trim(); state.settings.sbKey = document.getElementById('sb-key-input').value.trim(); supabase = null; save(); updateSupabaseStatus(); toast('Supabase saved. Sign in again if needed.'); }
-function saveSettings() {
-  state.settings.autoMemory = document.getElementById('auto-memory-toggle').checked;
-  const webSearchToggle = document.getElementById('web-search-toggle');
-  if (webSearchToggle) state.settings.webSearch = webSearchToggle.checked;
-  save();
-  pushSettingsToSupabase();
-}
-
-function updateSupabaseStatus() {
-  const dot = document.getElementById('sb-status-dot');
-  const txt = document.getElementById('sb-status-text');
-  if (state.settings.sbUrl && state.settings.sbKey) {
-    dot.className = 'status-dot ok'; txt.textContent = currentUser ? 'Signed in' : 'Configured';
-  } else {
-    dot.className = 'status-dot'; txt.textContent = 'Not configured — history saved locally only';
-  }
+  } catch (e) { console.error(e); }
 }
 
 async function syncSupabase(chatId) {
-  const client = initSupabaseClient();
-  const chat = state.chats[chatId];
-  if (!client || !currentUser || !chat) return;
+  if (!supabaseClient || !currentUser) return;
+  const chat = state.chats[chatId]; if (!chat) return;
   chat.updatedAt = Date.now();
-  try {
-    const { error } = await client.from('chats').upsert({
-      id: chatId,
-      user_id: currentUser.id,
-      title: chat.title,
-      model: chat.model,
-      messages: chat.messages,
-      updated_at: new Date().toISOString()
-    });
-    if (error) throw error;
-  } catch(e) { console.error(e); }
+  const payload = { id: chatId, user_id: currentUser.id, title: chat.title, model: chat.model, messages: chat.messages, updated_at: new Date().toISOString() };
+  const { error } = await supabaseClient.from('chats').upsert(payload);
+  if (error) console.error(error);
 }
 
 async function syncSettingsToSupabase() {
-  const client = initSupabaseClient();
-  if (!client || !currentUser) return;
-  try {
-    const { error } = await client.from('user_settings').upsert({
-      id: 'main',
-      user_id: currentUser.id,
-      memory: state.memoryCards,
-      instructions: state.instructions,
-      app_name: state.settings.appName || 'Arbiter',
-      auto_memory: !!state.settings.autoMemory,
-      web_search: !!state.settings.webSearch,
-      updated_at: new Date().toISOString()
-    });
-    if (error) throw error;
-  } catch(e) { console.error(e); }
+  if (!supabaseClient || !currentUser) return;
+  const payload = { id: 'main', user_id: currentUser.id, memory: state.memoryCards, instructions: state.instructions, app_name: state.settings.appName || 'Arbiter', auto_memory: !!state.settings.autoMemory, web_search: !!state.settings.webSearch, updated_at: new Date().toISOString() };
+  const { error } = await supabaseClient.from('user_settings').upsert(payload);
+  if (error) console.error(error);
 }
 
 async function syncSettingsFromSupabase() {
-  const client = initSupabaseClient();
-  if (!client || !currentUser) return;
+  if (!supabaseClient || !currentUser) return;
   try {
-    const { data: row, error } = await client.from('user_settings').select('*').eq('id', 'main').maybeSingle();
+    const { data: row, error } = await supabaseClient.from('user_settings').select('*').eq('id', 'main').maybeSingle();
     if (error || !row) return;
     if (row.memory) state.memoryCards = Array.isArray(row.memory) ? row.memory : JSON.parse(row.memory);
     if (row.instructions) state.instructions = typeof row.instructions === 'object' ? row.instructions : JSON.parse(row.instructions);
     if (row.app_name) state.settings.appName = row.app_name;
-    state.settings.autoMemory = !!row.auto_memory;
-    state.settings.webSearch = !!row.web_search;
-    save();
-    applyAppName();
-    renderMemoryCards();
-    loadInstructionsPanel();
-    loadSettingsPanel();
-  } catch(e) { console.error(e); }
+    if (typeof row.auto_memory === 'boolean') state.settings.autoMemory = row.auto_memory;
+    if (typeof row.web_search === 'boolean') state.settings.webSearch = row.web_search;
+    save(); applyAppName(); renderMemoryCards(); loadInstructionsPanel();
+  } catch (e) { console.error(e); }
+}
+
+async function signOutUser() {
+  if (!supabaseClient) return;
+  await supabaseClient.auth.signOut();
+  currentUser = null;
+  state.currentChatId = null;
+  save();
+  document.getElementById('app').classList.remove('visible');
+  showSetupScreen(true);
+  toast('Signed out');
+}
+
+function clearAllData() {
+  if (confirm('Delete all chats, memory, and settings?')) {
+    localStorage.removeItem('arbiter_v2');
+    localStorage.removeItem('arbiter_unlocked');
+    location.reload();
+  }
 }
 
 // ── PANELS ──
