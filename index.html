@@ -138,7 +138,7 @@
   #lock-screen {
     position: fixed; inset: 0;
     background: var(--bg);
-    display: flex; flex-direction: column;
+    display: none; flex-direction: column;
     align-items: center; justify-content: center;
     z-index: 1000; gap: 24px;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -660,24 +660,7 @@
 <body>
 
 <!-- LOCK -->
-<div id="lock-screen">
-  <div class="brand-lockup">
-    <div class="app-logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="12" cy="12" r="9"/>
-  <line x1="12" y1="6" x2="12" y2="18"/>
-  <path d="M8 10c1.5 1.2 2.5 2 4 2"/>
-  <path d="M16 10c-1.5 1.2-2.5 2-4 2"/>
-</svg>
-    </div>
-    <div class="lock-logo" id="lock-logo">Arbiter</div>
-  </div>
-  <div class="lock-form">
-    <input type="password" class="lock-input" id="lock-input" placeholder="Enter passphrase" autocomplete="off" />
-    <button class="primary-btn" onclick="tryUnlock()">Continue</button>
-    <div class="lock-error" id="lock-error"></div>
-  </div>
-</div>
+<div id="lock-screen" aria-hidden="true"></div>
 
 <!-- SETUP -->
 <div id="setup-screen">
@@ -1138,7 +1121,6 @@ function init() {
     c.messages && c.messages.forEach(m => { if (MODEL_MIGRATION[m.model]) m.model = MODEL_MIGRATION[m.model]; });
   });
 
-  document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') tryUnlock(); });
   document.querySelectorAll('.panel-overlay').forEach(el => {
     el.addEventListener('click', e => { if(e.target===el) el.classList.remove('open'); });
   });
@@ -1171,11 +1153,7 @@ function init() {
 
   applyAppName();
   buildModelSelect();
-
-  if (localStorage.getItem('arbiter_unlocked') === '1' && state.settings.sbUrl && state.settings.sbKey && state.settings.email) {
-    document.getElementById('lock-screen').style.display = 'none';
-    tryAutoLaunch();
-  }
+  bootstrapAuthFlow();
 }
 
 // ── MODEL SELECT ──
@@ -1430,44 +1408,45 @@ async function signInWithPassphrase(email, password, allowSignUp = false) {
   return currentUser;
 }
 
-async function tryAutoLaunch() {
-  try {
-    const user = await refreshCurrentUser();
-    if (user) {
-      launchApp();
-    } else {
-      document.getElementById('lock-screen').style.display = 'flex';
-    }
-  } catch(e) {
-    document.getElementById('lock-screen').style.display = 'flex';
-  }
-}
+async function bootstrapAuthFlow() {
+  const setup = document.getElementById('setup-screen');
+  const app = document.getElementById('app');
 
-async function tryUnlock() {
-  const inp = document.getElementById('lock-input');
-  const err = document.getElementById('lock-error');
+  app.classList.remove('visible');
+  setup.classList.remove('visible');
+
   if (!state.settings.sbUrl || !state.settings.sbKey || !state.settings.email) {
-    document.getElementById('lock-screen').style.display = 'none';
+    showFullSetup();
     document.getElementById('setup-screen').classList.add('visible');
-    showQuickConnect();
     return;
   }
-  const password = inp.value.trim();
-  if (!password) {
-    err.textContent = 'Enter your passphrase';
-    return;
-  }
-  err.textContent = '';
+
   try {
-    await signInWithPassphrase(state.settings.email, password, false);
-    localStorage.setItem('arbiter_unlocked', '1');
-    document.getElementById('lock-screen').style.display = 'none';
-    inp.value = '';
-    launchApp();
-  } catch(e) {
-    err.textContent = 'Incorrect passphrase or session unavailable';
-    inp.classList.add('error'); inp.value = '';
-    setTimeout(() => { inp.classList.remove('error'); err.textContent = ''; }, 2200);
+    const client = initSupabaseClient();
+    if (!client) throw new Error('Supabase client unavailable');
+
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+
+    currentUser = data?.session?.user || null;
+
+    if (currentUser) {
+      await syncSettingsFromSupabase();
+      await launchApp();
+      return;
+    }
+
+    showQuickConnect();
+    document.getElementById('quick-sb-url').value = state.settings.sbUrl || '';
+    document.getElementById('quick-sb-key').value = state.settings.sbKey || '';
+    document.getElementById('quick-email').value = state.settings.email || '';
+    document.getElementById('setup-screen').classList.add('visible');
+  } catch (e) {
+    showQuickConnect();
+    document.getElementById('quick-sb-url').value = state.settings.sbUrl || '';
+    document.getElementById('quick-sb-key').value = state.settings.sbKey || '';
+    document.getElementById('quick-email').value = state.settings.email || '';
+    document.getElementById('setup-screen').classList.add('visible');
   }
 }
 
@@ -1496,10 +1475,9 @@ async function saveSetup() {
   applyAppName();
   try {
     await signInWithPassphrase(email, password, true);
-    localStorage.setItem('arbiter_unlocked', '1');
     document.getElementById('setup-screen').classList.remove('visible');
     await syncSettingsFromSupabase();
-    launchApp();
+    await launchApp();
     toast('Setup complete');
   } catch(e) {
     toast('Auth failed: ' + (e.message || 'Unable to sign in'));
@@ -1517,11 +1495,10 @@ async function quickConnect() {
     state.settings = { ...state.settings, sbUrl, sbKey, email };
     save();
     await signInWithPassphrase(email, password, false);
-    localStorage.setItem('arbiter_unlocked', '1');
     document.getElementById('setup-screen').classList.remove('visible');
     applyAppName();
     await syncSettingsFromSupabase();
-    launchApp();
+    await launchApp();
     toast('Connected');
   } catch(e) {
     toast('Error: ' + (e.message || 'Connection failed'));
@@ -1533,6 +1510,8 @@ function pushSettingsToSupabase() {
 }
 
 async function launchApp() {
+  document.getElementById('setup-screen').classList.remove('visible');
+  document.getElementById('lock-screen').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   buildModelSelect();
   renderChatList();
@@ -2129,7 +2108,6 @@ async function clearAllData() {
   if (!confirm('Clear all local data? This does not delete cloud-synced chats.')) return;
   try { if (supabase) await supabase.auth.signOut(); } catch(e) {}
   localStorage.removeItem('arbiter_v2');
-  localStorage.removeItem('arbiter_unlocked');
   location.reload();
 }
 
