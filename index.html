@@ -140,7 +140,8 @@
     background: var(--bg);
     display: none; flex-direction: column;
     align-items: center; justify-content: center;
-    z-index: 1000; gap: 24px;
+    z-index: -1; gap: 24px;
+    pointer-events: none !important; opacity: 0 !important; visibility: hidden !important;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
   .lock-logo { font-size: 26px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
@@ -1096,6 +1097,11 @@ function init() {
       const p = JSON.parse(s);
       state = { ...state, ...p };
       if (p.settings) state.settings = { ...state.settings, ...p.settings };
+      // strip deprecated local-secret fields from older builds
+      if (state.settings) {
+        delete state.settings.password;
+        delete state.settings.orKey;
+      }
       // migrate flat memory array → memory cards if needed
       if (p.memory && Array.isArray(p.memory) && (!p.memoryCards || !p.memoryCards.length)) {
         state.memoryCards = p.memory.map((m, i) => ({
@@ -1154,7 +1160,12 @@ function init() {
   applyAppName();
   buildModelSelect();
   bootstrapAuthFlow();
+
+  window.addEventListener('error', (e) => {
+    console.error('Window error:', e.error || e.message);
+  });
 }
+
 
 // ── MODEL SELECT ──
 function getAllModels() {
@@ -1413,27 +1424,44 @@ async function bootstrapAuthFlow() {
   const app = document.getElementById('app');
   const lock = document.getElementById('lock-screen');
 
-  app.classList.remove('visible');
-  setup.classList.remove('visible');
-  if (lock) lock.style.display = 'none';
-
-  if (!state.settings.sbUrl || !state.settings.sbKey || !state.settings.email) {
-    showFullSetup();
-    document.getElementById('setup-screen').classList.add('visible');
-    return;
-  }
-
   try {
+    app.classList.remove('visible');
+    setup.classList.remove('visible');
+    if (lock) lock.style.display = 'none';
+
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+      showFullSetup();
+      setup.classList.add('visible');
+      toast('Supabase client failed to load');
+      return;
+    }
+
+    if (!state.settings.sbUrl || !state.settings.sbKey || !state.settings.email) {
+      showFullSetup();
+      setup.classList.add('visible');
+      return;
+    }
+
     const client = initSupabaseClient();
-    if (!client) throw new Error('Supabase client unavailable');
+    if (!client) {
+      showFullSetup();
+      setup.classList.add('visible');
+      return;
+    }
 
-    const { data, error } = await client.auth.getSession();
-    if (error) throw error;
+    let session = null;
+    try {
+      const { data, error } = await client.auth.getSession();
+      if (error) throw error;
+      session = data?.session || null;
+    } catch (e) {
+      console.error('Session bootstrap failed:', e);
+    }
 
-    currentUser = data?.session?.user || null;
+    currentUser = session?.user || null;
 
     if (currentUser) {
-      await syncSettingsFromSupabase();
+      try { await syncSettingsFromSupabase(); } catch (e) { console.error(e); }
       await launchApp();
       return;
     }
@@ -1442,13 +1470,17 @@ async function bootstrapAuthFlow() {
     document.getElementById('quick-sb-url').value = state.settings.sbUrl || '';
     document.getElementById('quick-sb-key').value = state.settings.sbKey || '';
     document.getElementById('quick-email').value = state.settings.email || '';
-    document.getElementById('setup-screen').classList.add('visible');
+    document.getElementById('quick-password').value = '';
+    setup.classList.add('visible');
   } catch (e) {
+    console.error('bootstrapAuthFlow failed:', e);
     showQuickConnect();
     document.getElementById('quick-sb-url').value = state.settings.sbUrl || '';
     document.getElementById('quick-sb-key').value = state.settings.sbKey || '';
     document.getElementById('quick-email').value = state.settings.email || '';
-    document.getElementById('setup-screen').classList.add('visible');
+    const setup = document.getElementById('setup-screen');
+    if (setup) setup.classList.add('visible');
+    toast('Startup error. Showing login.');
   }
 }
 
